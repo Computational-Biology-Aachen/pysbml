@@ -1,0 +1,61 @@
+site_name: pysbml
+site_url: https://computational-biology-aachen.github.io/pysbml/
+site_dir: dist
+repo_url: https://github.com/Computational-Biology-Aachen/pysbml
+use_directory_urls: false
+
+nav:
+  - About: index.md
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - navigation.instant
+    - navigation.instant.prefetch
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: teal
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: teal
+
+extra:
+  version:
+    provider: mike
+    default: stable
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.tabbed
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocs-jupyter:
+      ignore_h1_titles: True
+      execute: true
+      ignore: ["assets/*.ipynb"]
+      include_requirejs: true
+      custom_mathjax_url: "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/latest.js?config=TeX-AMS_CHTML-full,Safe"
+
+extra_css:
+  - stylesheets/extra.css

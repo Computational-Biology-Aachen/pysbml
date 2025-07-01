@@ -1,0 +1,37 @@
+repos:
+  - repo: https://github.com/hakancelikdev/unexport
+    rev: 0.4.0
+    hooks:
+      - id: unexport
+        exclude: "tests|__init__.py"
+        args: [--refactor]
+
+  - repo: local
+    hooks:
+      - id: jupyter-nb-clear-output
+        name: jupyter-nb-clear-output
+        files: \.ipynb$
+        stages: [pre-commit]
+        language: system
+        entry: uvx --from nbconvert jupyter-nbconvert --ClearOutputPreprocessor.enabled=True --inplace
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.7.2
+    hooks:
+      - id: uv-lock
+        name: uv-lock
+        stages: [pre-commit]
+        always_run: True
+
+  - repo: https://github.com/aio-libs/sort-all
+    rev: v1.3.0
+    hooks:
+      - id: sort-all
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      - id: ruff
+        types_or: [python, pyi] # don't fix notebooks
+        args: [--fix]
+      - id: ruff-format
