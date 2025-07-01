@@ -13,14 +13,24 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "Assignment",
     "AtomicUnit",
     "Compartment",
     "CompositeUnit",
     "Compound",
+    "Constraint",
+    "Delay",
     "Derived",
+    "Document",
+    "Event",
     "Function",
+    "Model",
     "Parameter",
+    "Plugin",
+    "Priority",
     "Reaction",
+    "Trigger",
+    "md_table_from_dict",
 ]
 
 

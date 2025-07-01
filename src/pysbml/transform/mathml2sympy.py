@@ -9,6 +9,8 @@ import sympy
 
 from pysbml.parse import mathml
 
+__all__ = ["LOGGER", "convert_mathml"]
+
 if TYPE_CHECKING:
     from pysbml.transform import data
 

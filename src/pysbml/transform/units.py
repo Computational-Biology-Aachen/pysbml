@@ -57,6 +57,8 @@ from sympy.physics.units.prefixes import (
 )
 from sympy.physics.units.quantities import Quantity
 
+__all__ = ["CONVERSION", "PREFIXES"]
+
 celsius = Quantity("celsius", abbrev="°C")
 celsius.set_global_dimension(temperature)
 # we can't do the proper offset here, sympy only allows proportional
