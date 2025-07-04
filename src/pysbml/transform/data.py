@@ -7,23 +7,19 @@ import wadler_lindig as wl
 
 from pysbml.parse.data import md_table_from_dict
 
-__all__ = ["Derived", "Function", "Model", "Parameter", "Reaction", "Variable"]
+__all__ = ["Expr", "Model", "Parameter", "Reaction", "Stoichiometry", "Variable"]
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import sympy
     from sympy.physics.units.quantities import Quantity
 
 
-def _md_eq(s: sympy.Expr) -> str:
+def _md_eq(s: Expr) -> str:
     return f"${s}$".replace("|", r"\|").replace("&", r"\&").replace("_", r"\_")
 
 
-@dataclass(kw_only=True, slots=True)
-class Function:
-    body: sympy.Expr
-    args: list[str]
+type Expr = sympy.Symbol | sympy.Float | sympy.Expr
+type Stoichiometry = dict[str, Expr]
 
 
 @dataclass(kw_only=True, slots=True)
@@ -36,17 +32,8 @@ class Parameter:
 
 
 @dataclass(kw_only=True, slots=True)
-class Derived:
-    fn: sympy.Expr
-    args: list[str]
-
-    def __repr__(self) -> str:
-        return wl.pformat(self)
-
-
-@dataclass(kw_only=True, slots=True)
 class Variable:
-    initial_value: sympy.Float
+    value: sympy.Float
     unit: Quantity | None
 
     def __repr__(self) -> str:
@@ -55,9 +42,8 @@ class Variable:
 
 @dataclass(kw_only=True, slots=True)
 class Reaction:
-    fn: sympy.Expr
-    args: list[str]
-    stoichiometry: Mapping[str, sympy.Float | str | Derived]
+    expr: sympy.Expr
+    stoichiometry: Stoichiometry
 
     def __repr__(self) -> str:
         return wl.pformat(self)
@@ -67,12 +53,12 @@ class Reaction:
 class Model:
     name: str
     units: dict[str, Quantity] = field(default_factory=dict)
-    functions: dict[str, Function] = field(default_factory=dict)
+    functions: dict[str, Expr] = field(default_factory=dict)
     parameters: dict[str, Parameter] = field(default_factory=dict)
     variables: dict[str, Variable] = field(default_factory=dict)
-    derived: dict[str, Derived] = field(default_factory=dict)
+    derived: dict[str, Expr] = field(default_factory=dict)
     reactions: dict[str, Reaction] = field(default_factory=dict)
-    initial_assignments: dict[str, Derived] = field(default_factory=dict)
+    initial_assignments: dict[str, Expr] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return wl.pformat(self)
@@ -87,11 +73,8 @@ class Model:
                     headers=[
                         "name",
                         "body",
-                        "args",
                     ],
-                    els=[
-                        (k, _md_eq(v.body), v.args) for k, v in self.functions.items()
-                    ],
+                    els=[(k, _md_eq(v)) for k, v in self.functions.items()],
                 )
             )
 
@@ -113,15 +96,13 @@ class Model:
                 md_table_from_dict(
                     headers=[
                         "name",
-                        "initial value",
+                        "value",
                         "unit",
                     ],
                     els=[
                         (
                             k,
-                            _md_eq(init.fn)
-                            if isinstance(init := v.initial_value, Derived)
-                            else init,
+                            _md_eq(v.value),
                             v.unit,
                         )
                         for k, v in self.variables.items()
@@ -132,19 +113,16 @@ class Model:
             content.append("# Derived")
             content.append(
                 md_table_from_dict(
-                    headers=["name", "fn", "args"],
-                    els=[(k, _md_eq(v.fn), v.args) for k, v in self.derived.items()],
+                    headers=["name", "fn"],
+                    els=[(k, _md_eq(v)) for k, v in self.derived.items()],
                 )
             )
         if len(self.initial_assignments) > 0:
             content.append("# Initial assignments")
             content.append(
                 md_table_from_dict(
-                    headers=["name", "fn", "args"],
-                    els=[
-                        (k, _md_eq(v.fn), v.args)
-                        for k, v in self.initial_assignments.items()
-                    ],
+                    headers=["name", "fn"],
+                    els=[(k, _md_eq(v)) for k, v in self.initial_assignments.items()],
                 )
             )
 
@@ -152,9 +130,9 @@ class Model:
             content.append("# Reactions")
             content.append(
                 md_table_from_dict(
-                    headers=["name", "fn", "args", "stoichiometry"],
+                    headers=["name", "fn", "stoichiometry"],
                     els=[
-                        (k, _md_eq(v.fn), v.args, v.stoichiometry)
+                        (k, _md_eq(v.expr), v.stoichiometry)
                         for k, v in self.reactions.items()
                     ],
                 )

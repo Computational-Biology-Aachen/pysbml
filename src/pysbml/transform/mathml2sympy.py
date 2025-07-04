@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
+def _handle_node(node: mathml.Base, fns: dict[str, data.Expr]) -> Any:
     match node:
         case mathml.Symbol(name):
             return sympy.Symbol(name)
@@ -111,7 +111,7 @@ def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
             raise NotImplementedError
         # n-ary
         case mathml.Function(name, children):
-            fn = fns[name].body
+            fn = fns[name]
             return fn(*(_handle_node(i, fns) for i in children))  # type: ignore
         case mathml.Max(children):
             return sympy.Max(*(_handle_node(i, fns) for i in children))
@@ -197,5 +197,5 @@ def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
             raise NotImplementedError(type(node))
 
 
-def convert_mathml(node: mathml.Base, fns: dict[str, data.Function]) -> sympy.Expr:
+def convert_mathml(node: mathml.Base, fns: dict[str, data.Expr]) -> sympy.Expr:
     return _handle_node(node=node, fns=fns)

@@ -25,10 +25,16 @@ class Base: ...
 class Symbol(Base):
     name: str
 
+    def __repr__(self) -> str:
+        return self.name
+
 
 @dataclass
 class Constant(Base):
     name: str
+
+    def __repr__(self) -> str:
+        return self.name
 
 
 @dataclass
@@ -40,10 +46,16 @@ class Boolean(Base):
 class Integer(Base):
     value: int
 
+    def __repr__(self) -> str:
+        return f"{self.value}"
+
 
 @dataclass
 class Float(Base):
     value: float
+
+    def __repr__(self) -> str:
+        return f"{self.value:.2g}"
 
 
 ###############################################################################
@@ -226,6 +238,9 @@ class Pow(Base):
     left: Base
     right: Base
 
+    def __repr__(self) -> str:
+        return f"{self.left!r} ** {self.right!r}"
+
 
 @dataclass
 class Implies(Base):
@@ -338,6 +353,9 @@ class Minus(Base):
 @dataclass
 class Mul(Base):
     children: list[Base]
+
+    def __repr__(self) -> str:
+        return " * ".join(repr(i) for i in self.children)
 
 
 @dataclass

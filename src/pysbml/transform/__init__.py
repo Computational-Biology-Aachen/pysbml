@@ -64,6 +64,8 @@ Source: https://sbml.org/software/libsbml/5.18.0/docs/formatted/python-api/class
 
 import logging
 import math
+from collections import defaultdict
+from dataclasses import dataclass
 from functools import reduce
 from operator import mul
 from typing import cast
@@ -77,6 +79,40 @@ from . import data
 from .mathml2sympy import convert_mathml
 
 LOGGER = logging.getLogger(__name__)
+
+
+def expr(x: data.Expr | sympy.Basic) -> sympy.Expr:
+    return cast(sympy.Expr, x)
+
+
+@dataclass
+class Ctx:
+    rxns_by_var: defaultdict[str, set[str]]
+    ass_rules_by_var: defaultdict[str, set[str]]
+
+
+def _to_sympy_types(
+    x: str | float | data.Expr,
+) -> data.Expr:
+    if isinstance(x, str):
+        return sympy.Symbol(x)
+    if isinstance(x, float | int):
+        return sympy.Float(x)
+    return x
+
+
+def _div_expr(
+    x: str | float | data.Expr,
+    y: str | float | data.Expr,
+) -> sympy.Expr:
+    return _to_sympy_types(x) / _to_sympy_types(y)  # type: ignore
+
+
+def _mul_expr(
+    x: str | float | data.Expr,
+    y: str | float | data.Expr,
+) -> sympy.Expr:
+    return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
@@ -103,255 +139,6 @@ def variable_is_constant(name: str, pmodel: pdata.Model) -> bool:
 
 def free_symbols(expr: sympy.Expr) -> list[str]:
     return [i.name for i in expr.free_symbols if isinstance(i, sympy.Symbol)]
-
-
-def convert_species(pmodel: pdata.Model, tmodel: data.Model) -> None:
-    for k, var in pmodel.variables.items():
-        if var.conversion_factor is not None:
-            raise NotImplementedError
-
-        if (init := var.initial_amount) is None and (
-            init := var.initial_concentration
-        ) is None:
-            init = 0.0
-
-        # Change species that are constant or boundary conditions
-        # to parameters
-        if variable_is_constant(k, pmodel):
-            tmodel.parameters[k] = data.Parameter(value=sympy.Float(init), unit=None)
-            continue
-
-        # Check if it is an amount rather than a concentration
-        if var.initial_concentration is None:
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(init), unit=None
-            )
-            continue
-
-        # Another whack one
-        if (
-            var.initial_concentration is not None
-            and compartment_is_valid(pmodel, var)
-            and not var.has_only_substance_units
-            and var.has_boundary_condition
-        ):
-            compartment = cast(str, var.compartment)
-            tmodel.derived[f"{k}_amount"] = data.Derived(
-                fn=_div_expr(k, compartment),
-                args=[k, cast(str, compartment)],
-            )
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(init), unit=None
-            )
-            continue
-
-        # This one is whack. If it IS a concentration but has only substance units
-        # is set, we have to multiply it by the compartment initially
-        if (
-            var.initial_concentration is not None
-            and compartment_is_valid(pmodel, var)
-            and var.has_only_substance_units
-        ):
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(init), unit=None
-            )
-            tmodel.initial_assignments[k] = data.Derived(
-                fn=init * sympy.Symbol(var.compartment),  # type: ignore
-                args=[cast(str, var.compartment)],
-            )
-            continue
-
-        # Ignore complexity if compartment isn't valid
-        if not compartment_is_valid(pmodel, var):
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(init), unit=None
-            )
-            continue
-
-        # Concentration means we need to keep track of the compartment size, because it
-        # will change dynamically
-        # Checked this isn't None via compartment_is_valid
-        compartment = cast(str, var.compartment)
-        tmodel.derived[k] = data.Derived(
-            fn=_div_expr(f"{k}_amount", compartment),
-            args=[f"{k}_amount", cast(str, compartment)],
-        )
-        tmodel.variables[f"{k}_amount"] = data.Variable(
-            initial_value=sympy.Float(init), unit=None
-        )
-
-        if k not in pmodel.initial_assignments:
-            tmodel.initial_assignments[f"{k}_amount"] = data.Derived(
-                fn=init * sympy.Symbol(compartment),  # type: ignore
-                args=[cast(str, compartment)],
-            )
-        else:
-            # Remove and steal the expression
-            ass = pmodel.initial_assignments.pop(k)
-            fn = convert_mathml(ass.body, fns=tmodel.functions) * sympy.Symbol(
-                compartment
-            )  # type: ignore
-            tmodel.initial_assignments[f"{k}_amount"] = data.Derived(
-                fn=fn,
-                args=[i.name for i in fn.args if isinstance(i, sympy.Symbol)],
-            )
-
-
-def _convert_rate_rule_arg_to_conc(
-    name: str, pmodel: pdata.Model
-) -> dict[str, sympy.Float | str]:
-    # the parsed species part is important to not
-    # introduce conversion on things that aren't species
-    if (species := pmodel.variables.get(name)) is None:
-        return {name: sympy.Float(1.0)}
-
-    if (
-        not species.is_concentration()
-        and compartment_is_valid(pmodel, species)
-        and not species.has_only_substance_units
-    ):
-        return {name: cast(str, species.compartment)}
-
-    # Yes, there is a case where it has a concentration, but `has_only_substrate_units`
-    # is `True`, which has to behave differently
-    if (
-        species.is_concentration()
-        and compartment_is_valid(pmodel, species)
-        and not species.has_only_substance_units
-    ):
-        if species.has_boundary_condition:
-            return {name: cast(str, species.compartment)}
-        return {f"{name}_amount": cast(str, species.compartment)}
-
-    if (
-        species.is_concentration()
-        and compartment_is_valid(pmodel, species)
-        and species.has_only_substance_units
-    ):
-        return {name: sympy.Float(1.0)}
-
-    if species.has_only_substance_units and not species.has_boundary_condition:
-        return {name: cast(str, species.compartment)}
-
-    # Safe?
-    return {name: sympy.Float(1.0)}
-
-
-def _convert_init_target_to_conc(
-    name: str, fn: sympy.Expr, args: list[str], pmodel: pdata.Model
-) -> tuple[sympy.Expr, list[str]]:
-    # the parsed species part is important to not
-    # introduce conversion on things that aren't species
-    if (species := pmodel.variables.get(name)) is None:
-        return fn, args
-
-    if (
-        not species.is_concentration()
-        and compartment_is_valid(pmodel, species)
-        and species.initial_amount is not None
-    ):
-        fn = fn * sympy.Symbol(species.compartment)  # type: ignore
-        return fn, free_symbols(fn)
-
-    # There are also cases where BOTH are concentration and amount are None
-    # In 676 one falls back to an amount, but in 688 one falls back to a concentration
-    # Here is the kicker: this is not dependent on S1 AT ALL, but can only be infered
-    # from S2. The two of them are linked by a reaction so apparenlty "have" to have
-    # the same unit. Kill me.
-    if species.initial_amount is None and species.initial_concentration is None:
-        LOGGER.warning(
-            "Neither initial amount nor initial concentration set for %s", name
-        )
-        is_amount = False
-
-        for reaction in pmodel.reactions.values():
-            if name in reaction.stoichiometry:
-                for _name in reaction.stoichiometry:
-                    if pmodel.variables[_name].initial_amount is not None:
-                        LOGGER.debug("Found variable %s that has amount", _name)
-                        is_amount = True
-                        break
-        if is_amount:
-            fn = fn * sympy.Symbol(species.compartment)  # type: ignore
-            return fn, free_symbols(fn)
-
-    # Fall back to assuming it is a concentration
-    # Probably not a good guess, but what are you gonna do at this point :)
-    return fn, free_symbols(fn)
-
-
-def _convert_rxn_args_to_concs(
-    fn: sympy.Expr, args: list[str], pmodel: pdata.Model
-) -> tuple[sympy.Expr, list[str]]:
-    replacements: dict[sympy.Symbol, sympy.Expr] = {}
-    for arg in args:
-        # the parsed species part is important to not
-        # introduce conversion on things that aren't species
-        if (species := pmodel.variables.get(arg)) is None:
-            continue
-
-        if species.is_concentration() and compartment_is_valid(pmodel, species):
-            # We cancel out compartment instead of species / compartment due to
-            # multi-species rxns. Otherwise we divide too often there
-            compartment = sympy.Symbol(species.compartment)
-            replacements[compartment] = compartment / compartment  # type: ignore
-            # replacements[sympy.Symbol(arg)] = sympy.Symbol(f"{arg}_amount")
-
-        elif (
-            (species.initial_amount is not None or arg in pmodel.initial_assignments)
-            and compartment_is_valid(pmodel, species)
-            and not species.has_only_substance_units
-        ):
-            # Species is given in amounts of substance, but is represented in
-            # concentration units when they appear in expressions
-
-            old = sympy.Symbol(arg)
-            compartment = sympy.Symbol(species.compartment)
-            replacements[old] = old / compartment  # type: ignore
-
-        elif species.has_only_substance_units:
-            continue
-
-    fn = cast(sympy.Expr, fn.subs(replacements))
-    return fn, free_symbols(fn)
-
-
-def _convert_stoich_tuple(x: tuple[float, str]) -> sympy.Expr:
-    factor, name = x
-    return sympy.Mul(sympy.Float(factor), sympy.Symbol(name))
-
-
-def _convert_rxn_stoichs(
-    rxn: pdata.Reaction, pmodel: pdata.Model
-) -> dict[str, sympy.Float | str | data.Derived]:
-    stoichiometry = {}
-
-    for k, factor in rxn.stoichiometry.items():
-        species = pmodel.variables[k]
-
-        if (
-            species.is_concentration()
-            and compartment_is_valid(pmodel=pmodel, species=species)
-            and not species.has_only_substance_units
-        ):
-            comp = sympy.Symbol(species.compartment)
-            x = (
-                _convert_stoich_tuple(factor)
-                if isinstance(factor, tuple)
-                else sympy.Float(factor)
-            )
-            fn = x * comp  # type: ignore
-            stoichiometry[f"{k}_amount"] = data.Derived(
-                fn=fn,
-                args=free_symbols(fn),
-            )
-        else:
-            stoichiometry[k] = (
-                data.Derived(fn=_convert_stoich_tuple(factor), args=[factor[1]])
-                if isinstance(factor, tuple)
-                else sympy.Float(factor)
-            )
-    return stoichiometry
 
 
 def convert_units(pmodel: pdata.Model, tmodel: data.Model) -> None:
@@ -390,6 +177,11 @@ def convert_events(
         raise NotImplementedError(msg)
 
 
+def convert_functions(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    for name, fn in pmodel.functions.items():
+        tmodel.functions[name] = convert_mathml(fn.body, fns=tmodel.functions)
+
+
 def convert_parameters(pmodel: pdata.Model, tmodel: data.Model) -> None:
     for k, par in pmodel.parameters.items():
         if par.is_constant:
@@ -397,21 +189,7 @@ def convert_parameters(pmodel: pdata.Model, tmodel: data.Model) -> None:
                 value=sympy.Float(par.value), unit=None
             )
         else:
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(par.value), unit=None
-            )
-
-
-def _div_expr(x: str | sympy.Symbol, y: str | sympy.Symbol) -> sympy.Expr:
-    x = sympy.Symbol(x) if isinstance(x, str) else x
-    y = sympy.Symbol(y) if isinstance(y, str) else x
-    return x / y  # type: ignore
-
-
-def _mul_expr(x: str | sympy.Symbol, y: str | sympy.Symbol) -> sympy.Expr:
-    x = sympy.Symbol(x) if isinstance(x, str) else x
-    y = sympy.Symbol(y) if isinstance(y, str) else x
-    return x * y  # type: ignore
+            tmodel.variables[k] = data.Variable(value=sympy.Float(par.value), unit=None)
 
 
 def convert_compartments(pmodel: pdata.Model, tmodel: data.Model) -> None:
@@ -421,32 +199,20 @@ def convert_compartments(pmodel: pdata.Model, tmodel: data.Model) -> None:
                 value=sympy.Float(par.size), unit=None
             )
         else:
-            tmodel.variables[k] = data.Variable(
-                initial_value=sympy.Float(par.size), unit=None
-            )
+            tmodel.variables[k] = data.Variable(value=sympy.Float(par.size), unit=None)
 
 
-def convert_functions(pmodel: pdata.Model, tmodel: data.Model) -> None:
-    for name, fn in pmodel.functions.items():
-        tmodel.functions[name] = data.Function(
-            body=convert_mathml(fn.body, fns=tmodel.functions),
-            args=[i.name for i in fn.args],
-        )
-
-
-def convert_rules(pmodel: pdata.Model, tmodel: data.Model) -> None:
+def convert_rules_and_initial_assignments(
+    pmodel: pdata.Model, tmodel: data.Model
+) -> None:
     for name, rr in pmodel.rate_rules.items():
         # Rate rules can create variables by SBML spec. Not cool
         if name not in tmodel.variables:
-            tmodel.variables[name] = data.Variable(
-                initial_value=sympy.Float(0.0), unit=None
-            )
+            tmodel.variables[name] = data.Variable(value=sympy.Float(0.0), unit=None)
 
-        stoichiometry = _convert_rate_rule_arg_to_conc(name, pmodel)
         tmodel.reactions[f"d{name}"] = data.Reaction(
-            fn=convert_mathml(rr.body, fns=tmodel.functions),
-            args=[i.name for i in rr.args],
-            stoichiometry=stoichiometry,
+            expr=convert_mathml(rr.body, fns=tmodel.functions),
+            stoichiometry={name: sympy.Float(1.0)},
         )
 
     for _ in pmodel.algebraic_rules.items():
@@ -454,53 +220,28 @@ def convert_rules(pmodel: pdata.Model, tmodel: data.Model) -> None:
         raise NotImplementedError(msg)
 
     for name, ar in pmodel.assignment_rules.items():
-        fn = convert_mathml(ar.body, fns=tmodel.functions)
-        args = free_symbols(fn)
+        tmodel.derived[name] = convert_mathml(ar.body, fns=tmodel.functions)
 
-        for arg in args:
-            if (var := pmodel.variables.get(arg)) is not None:
-                if (
-                    var.initial_concentration is not None
-                    and compartment_is_valid(pmodel, var)
-                    and not var.has_only_substance_units
-                    and var.has_boundary_condition
-                ):
-                    fn = cast(sympy.Expr, fn.subs(arg, f"{arg}_amount"))
-                elif (
-                    var.initial_amount is not None
-                    and compartment_is_valid(pmodel, var)
-                    and not var.has_only_substance_units
-                    and not var.has_boundary_condition
-                    and not pmodel.compartments[
-                        c := cast(str, var.compartment)
-                    ].is_constant
-                ):
-                    subs = _div_expr(arg, c)
-                    fn = cast(sympy.Expr, fn.subs(arg, subs))
+    for name, ia in pmodel.initial_assignments.items():
+        tmodel.initial_assignments[name] = convert_mathml(ia.body, fns=tmodel.functions)
 
-        tmodel.derived[name] = data.Derived(
-            fn=fn,
-            args=free_symbols(fn),
-        )
+
+def _convert_stoich_tuple(x: tuple[float, str]) -> sympy.Expr:
+    factor, name = x
+    return sympy.Mul(sympy.Float(factor), sympy.Symbol(name))
 
 
 def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
     for name, rxn in pmodel.reactions.items():
         fn = convert_mathml(rxn.body, fns=tmodel.functions)
-        fn, args = _convert_rxn_args_to_concs(
-            fn=fn,
-            args=[i.name for i in rxn.args],
-            pmodel=pmodel,
-        )
-        stoichiometry: dict[str, sympy.Float | str | data.Derived] = (
-            _convert_rxn_stoichs(rxn=rxn, pmodel=pmodel)
-        )
+        stoichiometry: data.Stoichiometry = {
+            k: (_convert_stoich_tuple(v) if isinstance(v, tuple) else sympy.Float(v))
+            for k, v in rxn.stoichiometry.items()
+        }
         pars_to_replace = {pn: f"{name}_{pn}" for pn in rxn.local_pars}
-        fn = cast(sympy.Expr, fn.subs(pars_to_replace))
-
+        fn = expr(fn.subs(pars_to_replace))
         tmodel.reactions[name] = data.Reaction(
-            fn=fn,
-            args=[pars_to_replace.get(i, i) for i in args],
+            expr=fn,
             stoichiometry=stoichiometry,
         )
 
@@ -510,57 +251,230 @@ def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
             )
 
 
-def convert_initial_assignments(pmodel: pdata.Model, tmodel: data.Model) -> None:
-    for name, ia in pmodel.initial_assignments.items():
-        # Assign normal parameter
-        if (pp := pmodel.parameters.get(name)) is not None and pp.is_constant:
-            tmodel.initial_assignments[name] = data.Derived(
-                fn=convert_mathml(ia.body, fns=tmodel.functions),
-                args=[i.name for i in ia.args],
-            )
-            continue
-
-        # Assign constant variable
-        if pmodel.variables.get(name) is not None and variable_is_constant(
-            name, pmodel
-        ):
-            tmodel.initial_assignments[name] = data.Derived(
-                fn=convert_mathml(ia.body, fns=tmodel.functions),
-                args=[i.name for i in ia.args],
-            )
-            continue
-
-        # Assign constant compartment
-        if (el := pmodel.compartments.get(name)) is not None and el.is_constant:
-            tmodel.initial_assignments[name] = data.Derived(
-                fn=convert_mathml(ia.body, fns=tmodel.functions),
-                args=[i.name for i in ia.args],
-            )
-            continue
-
-        # Otherwise it's a normal variable
-        fn, args = _convert_init_target_to_conc(
-            name=name,
-            fn=convert_mathml(ia.body, fns=tmodel.functions),
-            args=[i.name for i in ia.args],
-            pmodel=pmodel,
-        )
-        derived = data.Derived(fn=fn, args=args)
-        variable = tmodel.variables.get(name)
-        if variable is None:
-            tmodel.variables[name] = data.Variable(
-                initial_value=sympy.Float(0.0), unit=None
-            )
-
-        tmodel.initial_assignments[name] = derived
-
-
 def remove_duplicate_entries(tmodel: data.Model) -> None:
     for name in tmodel.derived:
         if name in tmodel.parameters:
             del tmodel.parameters[name]
         elif name in tmodel.variables:
             del tmodel.variables[name]
+
+
+def _transform_species(
+    k: str,
+    species: pdata.Species,
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """Separate species into parameters and variables and substitute correct version
+    in reactions, rules and initial assignments if necessary.
+    """
+    if species.conversion_factor is not None:
+        raise NotImplementedError
+
+    init = sympy.Float(
+        init
+        if (init := species.initial_amount) is not None
+        or (init := species.initial_concentration) is not None
+        else 0.0
+    )
+
+    # Now start making case distinctions
+    # Easiest is to check first if the compartment is valid
+    # If not, our life is significantly easier, because there really are just two choices
+    if not compartment_is_valid(pmodel, species=species):
+        if variable_is_constant(k, pmodel):
+            tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+            return
+
+        tmodel.variables[k] = data.Variable(value=init, unit=None)
+        return
+
+    # Compartment is valid as in exists and is non-zero / nan
+    compartment = cast(str, species.compartment)
+
+    # Now the garbage begins
+    # I'm going to do something disgusting by now and write out every case explicitly
+    # in a nested way to see the entire decision tree
+    # I know this is bad code, I'll refactor it later
+
+    # Let's separate next by is_concentration / is_amount / is_to_be_determined :')
+    # Because of course some of them are annotated without either conc or amount
+
+    # We have an amount here
+    if species.initial_amount is not None:
+        if species.has_only_substance_units:
+            if species.has_boundary_condition:
+                LOGGER.debug("Species %s: amount | True | True", k)
+                tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+            else:
+                LOGGER.debug("Species %s amount | True | False", k)
+                tmodel.variables[k] = data.Variable(value=init, unit=None)
+        else:  # noqa: PLR5501
+            if species.has_boundary_condition:
+                LOGGER.debug("Species %s: amount | False | True", k)
+
+                if k not in pmodel.rate_rules:
+                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                else:
+                    tmodel.variables[k] = data.Variable(value=init, unit=None)
+
+                # We need the concentration of the boundary species in reactions
+                k_conc = f"{k}_conc"
+                tmodel.derived[k_conc] = _div_expr(k, compartment)
+
+                # Fix reactions
+                for rxn_name in ctx.rxns_by_var[k]:
+                    rxn = tmodel.reactions[rxn_name]
+                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
+
+            else:
+                LOGGER.debug("Species %s: amount | False | False", k)
+                # This is the default case for most tests
+                # We have an amount, that has to be interpreted as a concentration
+                # in e.g. reactions, but then the integration has to yield an amount again
+                # So divide variable/compartment, but calculate flux*compartment
+
+                tmodel.variables[k] = data.Variable(value=init, unit=None)
+                tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
+
+                # Fix initial assignment rule
+                if (ar := tmodel.initial_assignments.get(k)) is not None:
+                    LOGGER.debug("Initial assignmet for species %s", k)
+                    # If initial assignment updates compartment, use the expression
+                    # of the updated compartment
+                    tmodel.initial_assignments[k] = _mul_expr(
+                        ar,
+                        comp
+                        if (comp := tmodel.initial_assignments.get(compartment))
+                        is not None
+                        else compartment,
+                    )
+
+                # Fix assignment rules
+                # for ar in ctx.ass_rules_by_var[k]:
+                #     tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+
+                # Fix rate rules
+                if (rr := tmodel.reactions.get(f"d{k}")) is not None:
+                    rr.stoichiometry = {k: sympy.Symbol(compartment)}
+                    # rr.stoichiometry = {k: sympy.Float(1.0)}
+
+                # Fix reaction
+                for rxn_name in ctx.rxns_by_var[k]:
+                    LOGGER.debug("Fixing reaction %s", rxn_name)
+                    rxn = tmodel.reactions[rxn_name]
+                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
+                    if (s := rxn.stoichiometry.get(k)) is not None:
+                        rxn.stoichiometry[k] = _mul_expr(s, compartment)
+
+                    # Since we are inserting a concentrating but changing an amount
+                    # we need to remove the compartment
+                    rxn.expr = expr(
+                        rxn.expr.subs(compartment, _div_expr(compartment, compartment))
+                    )
+
+    # We have a concentration here
+    elif species.initial_concentration is not None:
+        # If it IS a concentration but has only substance units
+        # is set, we have to multiply it by the compartment initially
+        if species.has_only_substance_units:
+            if species.has_boundary_condition:
+                LOGGER.debug("Species %s: | conc | True | True", k)
+                tmodel.variables[k] = data.Variable(value=init, unit=None)
+                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+
+            else:
+                LOGGER.debug("Species %s: | conc | True | False", k)
+                tmodel.variables[k] = data.Variable(value=init, unit=None)
+                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+
+        else:  # noqa: PLR5501
+            if species.has_boundary_condition:
+                LOGGER.debug("Species %s: | conc | False | True", k)
+
+                tmodel.variables[k] = data.Variable(value=init, unit=None)
+                k_amount = f"{k}_amount"
+                tmodel.derived[k_amount] = _div_expr(k, compartment)
+
+                # Fix derived
+                # FIXME: this is really inefficient
+                for dname, der in tmodel.derived.items():
+                    if dname == k_amount:
+                        continue
+                    tmodel.derived[dname] = expr(der.subs(k, k_amount))
+
+                # Fix rate rules
+                if (rr := tmodel.reactions.get(f"d{k}")) is not None:
+                    rr.expr = _mul_expr(rr.expr, compartment)
+
+            else:
+                LOGGER.debug("Species %s: | conc | False | False", k)
+
+                if species.is_constant:
+                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+
+                elif not pmodel.compartments[compartment].is_constant:
+                    tmodel.variables[k_amount := f"{k}_amount"] = data.Variable(
+                        value=init, unit=None
+                    )
+                    tmodel.derived[k] = _div_expr(k_amount, compartment)
+                    tmodel.initial_assignments[k_amount] = _mul_expr(
+                        species.initial_concentration, compartment
+                    )
+
+                    for rxn_name in ctx.rxns_by_var[k]:
+                        rxn = tmodel.reactions[rxn_name]
+                        if k in rxn.stoichiometry:
+                            rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
+
+                else:
+                    tmodel.variables[k] = data.Variable(value=init, unit=None)
+                    if (
+                        comp := tmodel.initial_assignments.get(compartment)
+                    ) is not None:
+                        tmodel.initial_assignments[k] = _mul_expr(init, comp)
+
+                    # Fix rate rules
+                    if (rr := tmodel.derived.get(f"d{k}")) is not None:
+                        tmodel.derived[f"d{k}"] = expr(
+                            rr.subs(compartment, _div_expr(compartment, compartment))
+                        )
+
+                    for rxn_name in ctx.rxns_by_var[k]:
+                        rxn = tmodel.reactions[rxn_name]
+
+    # Now BOTH of them are None, the whackest case of them all. If you think you can
+    # figure out if it is a concentration or amount just by looking at species
+    # and compartments, boy do I have a surprise for you :)
+    else:
+        is_concentration = False
+        for rxn_name in ctx.rxns_by_var[k]:
+            reaction = pmodel.reactions[rxn_name]
+            targets = {i.name for i in reaction.args} | set(reaction.stoichiometry)
+            for other in targets:
+                if (
+                    var := pmodel.variables.get(other)
+                ) is not None and var.initial_concentration is not None:
+                    is_concentration = True
+                    break
+        # Inject concentration and run the whole thing again to avoid
+        # duplicating all those conditions
+        if is_concentration:
+            pmodel.variables[k].initial_concentration = 0.0
+            _transform_species(k, species, pmodel, tmodel, ctx)
+
+        # Fall back to interpretation as amount if no evidence for concentration
+        # was found
+        else:
+            pmodel.variables[k].initial_amount = 0.0
+            _transform_species(k, species, pmodel, tmodel, ctx)
+
+
+def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
+    LOGGER.debug("Species name | type | only subs. | boundary cond.")
+    for k, var in pmodel.variables.items():
+        _transform_species(k, var, pmodel, tmodel, ctx=ctx)
 
 
 def transform(doc: pdata.Document) -> data.Model:
@@ -574,17 +488,27 @@ def transform(doc: pdata.Document) -> data.Model:
         msg = "Conversion factors not yet supported"
         raise NotImplementedError(msg)
 
+    ctx = Ctx(rxns_by_var=defaultdict(set), ass_rules_by_var=defaultdict(set))
+    for name, rxn in pmodel.reactions.items():
+        for arg in rxn.args:
+            ctx.rxns_by_var[arg.name].add(name)
+        for arg in rxn.stoichiometry:
+            ctx.rxns_by_var[arg].add(name)
+    for name, rule in pmodel.assignment_rules.items():
+        for arg in rule.args:
+            ctx.ass_rules_by_var[arg.name].add(name)
+
     tmodel = data.Model(name=pmodel.name)  # type: ignore
     convert_units(pmodel=pmodel, tmodel=tmodel)
     convert_parameters(pmodel=pmodel, tmodel=tmodel)
-    convert_species(pmodel=pmodel, tmodel=tmodel)
     convert_compartments(pmodel=pmodel, tmodel=tmodel)
-
     convert_constraints(pmodel=pmodel, tmodel=tmodel)
     convert_events(pmodel=pmodel, tmodel=tmodel)
     convert_functions(pmodel=pmodel, tmodel=tmodel)
-    convert_rules(pmodel=pmodel, tmodel=tmodel)
+    convert_rules_and_initial_assignments(pmodel=pmodel, tmodel=tmodel)
     convert_reactions(pmodel=pmodel, tmodel=tmodel)
-    convert_initial_assignments(pmodel=pmodel, tmodel=tmodel)
+
+    # Do the heavy lifting here
+    transform_species(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
     remove_duplicate_entries(tmodel=tmodel)
     return tmodel

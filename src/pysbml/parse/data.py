@@ -248,13 +248,13 @@ class Model:
                 md_table_from_dict(
                     headers=[
                         "name",
-                        "initial_amount",
-                        "initial_concentration",
-                        "is_constant",
+                        "amount",
+                        "conc",
+                        "constant",
                         "substance_units",
                         "compartment",
-                        "has_only_substance_units",
-                        "has_boundary_condition",
+                        "only_substance_units",
+                        "boundary_condition",
                     ],
                     els=[
                         (

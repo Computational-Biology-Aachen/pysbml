@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 
 import libsbml
 
-from . import data, l1, l2, l3
+from . import data, l1
 
 if TYPE_CHECKING:
     from .data import Model
@@ -18,17 +18,18 @@ __all__ = [
 
 def parse(lib_model: libsbml.Model, version: int, level: int) -> Model:
     """Parse sbml model."""
-    if version != 2 or level != 3:
+    if version != 2 or level != 3:  # noqa: PLR2004
         msg = f"Version {version}, level {level} unsupported"
         raise NotImplementedError(msg)
 
+    # FIXME: actually use different parsers here
     match version:
         case 1:
             return l1.parse(lib_model=lib_model, level=level)
         case 2:
-            return l2.parse(lib_model=lib_model, level=level)
+            return l1.parse(lib_model=lib_model, level=level)
         case 3:
-            return l3.parse(lib_model=lib_model, level=level)
+            return l1.parse(lib_model=lib_model, level=level)
         case _:
             msg = f"Unknown SBML version {version}"
             raise NotImplementedError(msg)
