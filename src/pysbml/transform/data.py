@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def _md_eq(s: sympy.Expr) -> str:
-    return f"${s}$".replace("|", r"\|")
+    return f"${s}$".replace("|", r"\|").replace("&", r"\&").replace("_", r"\_")
 
 
 @dataclass(kw_only=True, slots=True)
@@ -28,7 +28,7 @@ class Function:
 
 @dataclass(kw_only=True, slots=True)
 class Parameter:
-    value: float
+    value: sympy.Float
     unit: Quantity | None
 
     def __repr__(self) -> str:
@@ -46,7 +46,7 @@ class Derived:
 
 @dataclass(kw_only=True, slots=True)
 class Variable:
-    initial_value: float
+    initial_value: sympy.Float
     unit: Quantity | None
 
     def __repr__(self) -> str:
@@ -57,7 +57,7 @@ class Variable:
 class Reaction:
     fn: sympy.Expr
     args: list[str]
-    stoichiometry: Mapping[str, float | str | Derived]
+    stoichiometry: Mapping[str, sympy.Float | str | Derived]
 
     def __repr__(self) -> str:
         return wl.pformat(self)

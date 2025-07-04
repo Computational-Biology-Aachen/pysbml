@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import itertools as it
 import logging
-import operator
+import operator as op
 from functools import reduce
 from typing import TYPE_CHECKING, Any
 
@@ -19,8 +20,15 @@ LOGGER = logging.getLogger(__name__)
 
 def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
     match node:
-        case mathml.Symbol(name) | mathml.Constant(name):
+        case mathml.Symbol(name):
             return sympy.Symbol(name)
+        case mathml.Constant(name):
+            if name == "e":
+                return sympy.E
+            if name == "pi":
+                return sympy.pi
+            msg = f"Unknown constant {name}"
+            raise NotImplementedError(msg)
         case mathml.Boolean(value):
             return sympy.true if value else sympy.false
         case mathml.Integer(value):
@@ -109,14 +117,11 @@ def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
             return sympy.Max(*(_handle_node(i, fns) for i in children))
         case mathml.Min(children):
             return sympy.Min(*(_handle_node(i, fns) for i in children))
-        case mathml.Piecewise(children):
-            handled = [_handle_node(i, fns) for i in children]
-            pairs = [
-                (handled[2 * i], handled[2 * i + 1]) for i in range(len(children) // 2)
-            ]
-            return sympy.Piecewise(*pairs, (handled[-1], True))
         case mathml.Rem(children):
-            return sympy.rem(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.mod,
+                (_handle_node(i, fns) for i in children),
+            )
         case mathml.And(children):
             return sympy.And(*(_handle_node(i, fns) for i in children))
         case mathml.Not(children):
@@ -126,17 +131,53 @@ def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
         case mathml.Xor(children):
             return sympy.Xor(*(_handle_node(i, fns) for i in children))
         case mathml.Eq(children):
-            return sympy.Eq(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (
+                    a == b
+                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
+                ),
+            )
         case mathml.GreaterEqual(children):
-            return sympy.Ge(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (
+                    a >= b
+                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
+                ),
+            )
         case mathml.GreaterThan(children):
-            return sympy.Gt(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (a > b for a, b in it.pairwise(_handle_node(i, fns) for i in children)),
+            )
         case mathml.LessEqual(children):
-            return sympy.Le(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (
+                    a <= b
+                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
+                ),
+            )
         case mathml.LessThan(children):
-            return sympy.Lt(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (a < b for a, b in it.pairwise(_handle_node(i, fns) for i in children)),
+            )
         case mathml.NotEqual(children):
-            return sympy.Ne(*(_handle_node(i, fns) for i in children))
+            return reduce(
+                op.and_,
+                (
+                    a != b
+                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
+                ),
+            )
+        case mathml.Piecewise(children):
+            handled = [_handle_node(i, fns) for i in children]
+            pairs = [
+                (handled[2 * i], handled[2 * i + 1]) for i in range(len(children) // 2)
+            ]
+            return sympy.Piecewise(*pairs, (handled[-1], True))
         case mathml.Add(children):
             return sympy.Add(*(_handle_node(i, fns) for i in children))
         case mathml.Mul(children):
@@ -147,11 +188,11 @@ def _handle_node(node: mathml.Base, fns: dict[str, data.Function]) -> Any:
             children = [_handle_node(i, fns) for i in children]
             if len(children) == 1:
                 return -children[0]
-            return reduce(operator.sub, children)
+            return reduce(op.sub, children)
         case mathml.Divide(children):
-            return reduce(operator.truediv, (_handle_node(i, fns) for i in children))
+            return reduce(op.truediv, (_handle_node(i, fns) for i in children))
         case mathml.IntDivide(children):
-            return reduce(operator.floordiv, (_handle_node(i, fns) for i in children))
+            return reduce(op.floordiv, (_handle_node(i, fns) for i in children))
         case _:
             raise NotImplementedError(type(node))
 

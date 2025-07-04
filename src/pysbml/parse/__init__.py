@@ -19,7 +19,8 @@ __all__ = [
 def parse(lib_model: libsbml.Model, version: int, level: int) -> Model:
     """Parse sbml model."""
     if version != 2 or level != 3:
-        raise NotImplementedError(f"Version {version}, level {level} unsupported")
+        msg = f"Version {version}, level {level} unsupported"
+        raise NotImplementedError(msg)
 
     match version:
         case 1:
@@ -29,7 +30,8 @@ def parse(lib_model: libsbml.Model, version: int, level: int) -> Model:
         case 3:
             return l3.parse(lib_model=lib_model, level=level)
         case _:
-            raise NotImplementedError(f"Unknown SBML version {version}")
+            msg = f"Unknown SBML version {version}"
+            raise NotImplementedError(msg)
 
 
 def load_document(file: str | Path) -> data.Document:
@@ -41,8 +43,13 @@ def load_document(file: str | Path) -> data.Document:
     version = cast(int, doc.version)
     level = cast(int, doc.level)
 
+    model: libsbml.Model = doc.getModel()
+    if len(model.getListOfAllElementsFromPlugins()):
+        msg = "Plugin handling not yet implemented"
+        raise NotImplementedError(msg)
+
     return data.Document(
-        model=parse(doc.getModel(), version=version, level=level),
+        model=parse(model, version=version, level=level),
         plugins=[
             data.Plugin(name=(doc.getPlugin(i).package_name))
             for i in range(doc.num_plugins)

@@ -1,15 +1,16 @@
 import itertools as it
 import logging
+import math
 from collections import defaultdict
 
 import libsbml
 
+import pysbml.parse.data as pdata
 from pysbml.parse.data import (
     Assignment,
     AtomicUnit,
     Compartment,
     CompositeUnit,
-    Compound,
     Constraint,
     Delay,
     Derived,
@@ -19,6 +20,7 @@ from pysbml.parse.data import (
     Parameter,
     Priority,
     Reaction,
+    Species,
     Trigger,
 )
 from pysbml.parse.mathml import parse_sbml_math
@@ -28,7 +30,7 @@ from pysbml.parse.units import get_unit_conversion
 __all__ = [
     "LOGGER",
     "UNIT_CONVERSION",
-    "nan_to_zero",
+    "handle_nan",
     "parse",
     "parse_compartments",
     "parse_constraints",
@@ -47,8 +49,8 @@ UNIT_CONVERSION = get_unit_conversion()
 LOGGER = logging.getLogger(__name__)
 
 
-def nan_to_zero(value: float) -> float:
-    return 0 if str(value) == "nan" else value
+def handle_nan(value: float) -> float:
+    return math.nan if str(value) == "nan" else value
 
 
 def parse_constraints(model: Model, lib_model: libsbml.Model) -> None:
@@ -125,6 +127,9 @@ def parse_events(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_units(model: Model, lib_model: libsbml.Model) -> None:
+    unit_definition: libsbml.UnitDefinition
+    unit: libsbml.Unit
+
     for unit_definition in lib_model.getListOfUnitDefinitions():
         composite_id = unit_definition.getId()
         local_units = []
@@ -145,22 +150,27 @@ def parse_units(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_compartments(model: Model, lib_model: libsbml.Model) -> None:
+    compartment: libsbml.Compartment
+
     for compartment in lib_model.getListOfCompartments():
         sbml_id = name_to_py(compartment.getId())
         model.compartments[sbml_id] = Compartment(
             name=compartment.getName(),
             dimensions=compartment.getSpatialDimensions(),
-            size=nan_to_zero(compartment.getSize()),
+            size=handle_nan(compartment.getSize()),
             units=compartment.getUnits(),
             is_constant=compartment.getConstant(),
         )
 
 
 def parse_parameters(model: Model, lib_model: libsbml.Model) -> None:
+    parameter: libsbml.Parameter
+
     for parameter in lib_model.getListOfParameters():
         model.parameters[name_to_py(parameter.getId())] = Parameter(
-            value=nan_to_zero(parameter.getValue()),
+            value=handle_nan(parameter.getValue()),
             is_constant=parameter.getConstant(),
+            unit=parameter.getUnits(),
         )
 
 
@@ -170,28 +180,25 @@ def parse_variables(model: Model, lib_model: libsbml.Model) -> None:
         conversion_factor: str | None = (
             cf if bool(cf := compound.getConversionFactor()) else None
         )
-
-        # NOTE: What the shit is this?
-        initial_amount = compound.getInitialAmount()
-        if str(initial_amount) == "nan":
-            initial_amount = compound.getInitialConcentration()
-            is_concentration = str(initial_amount) != "nan"
-        else:
-            is_concentration = False
-
-        has_boundary_condition = compound.getBoundaryCondition()
+        initial_amount = (
+            None if str(init := compound.getInitialAmount()) == "nan" else init
+        )
+        initial_concentration = (
+            None if str(init := compound.getInitialConcentration()) == "nan" else init
+        )
+        has_boundary_condition: bool = compound.getBoundaryCondition()
         if has_boundary_condition:
             model.boundary_species.add(compound_id)
 
-        model.variables[compound_id] = Compound(
+        model.variables[compound_id] = Species(
             compartment=compound.getCompartment(),
             conversion_factor=conversion_factor,
-            initial_amount=nan_to_zero(initial_amount),
+            initial_amount=initial_amount,
+            initial_concentration=initial_concentration,
             substance_units=compound.getSubstanceUnits(),
             has_only_substance_units=compound.getHasOnlySubstanceUnits(),
             has_boundary_condition=has_boundary_condition,
             is_constant=compound.getConstant(),
-            is_concentration=is_concentration,
         )
 
 
@@ -234,7 +241,7 @@ def parse_initial_assignments(model: Model, lib_model: libsbml.Model) -> None:
         )
 
 
-def _parse_algebraic_rule(model, rule: libsbml.AlgebraicRule) -> None:
+def _parse_algebraic_rule(model: Model, rule: libsbml.AlgebraicRule) -> None:
     name: str = name_to_py(rule.getId())
 
     if (node := rule.getMath()) is None:
@@ -250,7 +257,7 @@ def _parse_algebraic_rule(model, rule: libsbml.AlgebraicRule) -> None:
     )
 
 
-def _parse_assignment_rule(model, rule: libsbml.AssignmentRule) -> None:
+def _parse_assignment_rule(model: Model, rule: libsbml.AssignmentRule) -> None:
     name: str = name_to_py(rule.getId())
 
     if (node := rule.getMath()) is None:
@@ -266,7 +273,7 @@ def _parse_assignment_rule(model, rule: libsbml.AssignmentRule) -> None:
     )
 
 
-def _parse_rate_rule(model, rule: libsbml.RateRule) -> None:
+def _parse_rate_rule(model: Model, rule: libsbml.RateRule) -> None:
     name: str = name_to_py(rule.getId())
 
     if (node := rule.getMath()) is None:
@@ -282,7 +289,7 @@ def _parse_rate_rule(model, rule: libsbml.RateRule) -> None:
     )
 
 
-def parse_rules(model, sbml_model: libsbml.Model) -> None:
+def parse_rules(model: Model, sbml_model: libsbml.Model) -> None:
     """Parse rules and separate them by type."""
     for rule in sbml_model.getListOfRules():
         if rule.element_name == "algebraicRule":
@@ -309,13 +316,16 @@ def _parse_local_parameters(
     ):
         name = name_to_py(parameter.getId())
         pars[name] = Parameter(
-            value=nan_to_zero(parameter.getValue()),
+            value=handle_nan(parameter.getValue()),
             is_constant=parameter.getConstant(),
+            unit=None,
         )
     return pars
 
 
-def _parse_stoichiometries(model: Model, reaction: libsbml.Reaction) -> dict:
+def _parse_stoichiometries(
+    model: Model, reaction: libsbml.Reaction
+) -> dict[str, int | tuple[float, str]]:
     """Parse reaction stoichiometries
 
     Stoichiometries can be multiple things
@@ -323,14 +333,22 @@ def _parse_stoichiometries(model: Model, reaction: libsbml.Reaction) -> dict:
     - boundary species
     - references
     """
-    dynamic_stoichiometry: dict[str, str] = {}
+    dynamic_stoichiometry: dict[str, tuple[float, str]] = {}
     parsed_reactants: defaultdict[str, int] = defaultdict(int)
+
+    substrate: libsbml.SpeciesReference
     for substrate in reaction.getListOfReactants():
         species = name_to_py(substrate.getSpecies())
-        if (ref := substrate.getId()) != "":
-            dynamic_stoichiometry[species] = ref
-            model.parameters[ref] = Parameter(value=0.0, is_constant=False)
 
+        # Only species references have Id set
+        if (ref := substrate.getId()) != "":
+            model.parameters[ref] = Parameter(
+                value=substrate.getStoichiometry(), is_constant=False, unit=None
+            )
+            # FIXME: this needs to be negative!
+            dynamic_stoichiometry[species] = (-1.0, ref)
+
+        # Boundary species can safely be ignored
         elif species not in model.boundary_species:
             factor = substrate.getStoichiometry()
             if str(factor) == "nan":
@@ -338,12 +356,15 @@ def _parse_stoichiometries(model: Model, reaction: libsbml.Reaction) -> dict:
                 raise ValueError(msg)
             parsed_reactants[species] -= factor
 
+    product: libsbml.SpeciesReference
     parsed_products: defaultdict[str, int] = defaultdict(int)
     for product in reaction.getListOfProducts():
         species = name_to_py(product.getSpecies())
         if (ref := product.getId()) != "":
-            dynamic_stoichiometry[species] = ref
-            model.parameters[ref] = Parameter(value=0.0, is_constant=False)
+            dynamic_stoichiometry[species] = (1.0, ref)
+            model.parameters[ref] = Parameter(
+                value=product.getStoichiometry(), is_constant=False, unit=None
+            )
         elif species not in model.boundary_species:
             factor = product.getStoichiometry()
             if str(factor) == "nan":
@@ -361,7 +382,7 @@ def _parse_stoichiometries(model: Model, reaction: libsbml.Reaction) -> dict:
     return stoichiometries | dynamic_stoichiometry
 
 
-def parse_reactions(model, sbml_model: libsbml.Model) -> None:
+def parse_reactions(model: Model, sbml_model: libsbml.Model) -> None:
     for reaction in sbml_model.getListOfReactions():
         name = name_to_py(reaction.getId())
         kinetic_law = reaction.getKineticLaw()
@@ -384,16 +405,21 @@ def parse_reactions(model, sbml_model: libsbml.Model) -> None:
         )
 
 
-def parse(lib_model: libsbml.Model, level: int) -> Model:
+def parse(
+    lib_model: libsbml.Model,
+    level: int,  # noqa: ARG001
+) -> Model:
     """Parse sbml model."""
 
-    model = Model(
+    model = pdata.Model(
         name=lib_model.getName(),  # type: ignore
+        conversion_factor=None
+        if (conv := lib_model.getConversionFactor()) == ""
+        else conv,
     )
     parse_units(model=model, lib_model=lib_model)
     parse_constraints(model=model, lib_model=lib_model)
     parse_events(model=model, lib_model=lib_model)
-    parse_units(model=model, lib_model=lib_model)
     parse_compartments(model=model, lib_model=lib_model)
     parse_parameters(model=model, lib_model=lib_model)
     parse_variables(model=model, lib_model=lib_model)

@@ -17,7 +17,6 @@ __all__ = [
     "AtomicUnit",
     "Compartment",
     "CompositeUnit",
-    "Compound",
     "Constraint",
     "Delay",
     "Derived",
@@ -29,6 +28,7 @@ __all__ = [
     "Plugin",
     "Priority",
     "Reaction",
+    "Species",
     "Trigger",
     "md_table_from_dict",
 ]
@@ -87,6 +87,7 @@ class CompositeUnit:
 class Parameter:
     value: float
     is_constant: bool
+    unit: str | None
 
     def __repr__(self) -> str:
         return wl.pformat(self)
@@ -105,15 +106,22 @@ class Compartment:
 
 
 @dataclass(kw_only=True, slots=True)
-class Compound:
+class Species:
     compartment: str | None
     conversion_factor: str | None
-    initial_amount: float
+    initial_amount: float | None
+    initial_concentration: float | None
     substance_units: str | None
     has_only_substance_units: bool
     has_boundary_condition: bool
     is_constant: bool
-    is_concentration: bool
+
+    def is_concentration(self) -> bool:
+        if self.initial_concentration is not None:
+            return True
+        if self.has_only_substance_units:
+            return False
+        return False
 
     def __repr__(self) -> str:
         return wl.pformat(self)
@@ -140,7 +148,7 @@ class Function:
 @dataclass(kw_only=True, slots=True)
 class Reaction:
     body: Base
-    stoichiometry: Mapping[str, float | str]
+    stoichiometry: Mapping[str, float | tuple[float, str]]
     args: list[Symbol]
     local_pars: dict[str, Parameter]
 
@@ -193,6 +201,7 @@ class Constraint:
 @dataclass(kw_only=True, slots=True)
 class Model:
     name: str
+    conversion_factor: str | None = None
     # Collections
     boundary_species: set[str] = field(default_factory=set)
     # Parsed stuff
@@ -202,7 +211,7 @@ class Model:
     composite_units: dict[str, CompositeUnit] = field(default_factory=dict)
     compartments: dict[str, Compartment] = field(default_factory=dict)
     parameters: dict[str, Parameter] = field(default_factory=dict)
-    variables: dict[str, Compound] = field(default_factory=dict)
+    variables: dict[str, Species] = field(default_factory=dict)
     assignment_rules: dict[str, Derived] = field(default_factory=dict)
     algebraic_rules: dict[str, Derived] = field(default_factory=dict)
     rate_rules: dict[str, Derived] = field(default_factory=dict)
@@ -223,26 +232,40 @@ class Model:
                     els=[(k, v.args, v.body) for k, v in self.functions.items()],
                 )
             )
+        if len(self.compartments) > 0:
+            content.append("# Compartment")
+            content.append(
+                md_table_from_dict(
+                    headers=["name", "size", "is_constant"],
+                    els=[
+                        (k, v.size, v.is_constant) for k, v in self.compartments.items()
+                    ],
+                )
+            )
         if len(self.variables) > 0:
             content.append("# Variables")
             content.append(
                 md_table_from_dict(
                     headers=[
                         "name",
-                        "value",
+                        "initial_amount",
+                        "initial_concentration",
                         "is_constant",
-                        "is_concentration",
-                        "has_only_substance_units",
                         "substance_units",
+                        "compartment",
+                        "has_only_substance_units",
+                        "has_boundary_condition",
                     ],
                     els=[
                         (
                             k,
                             v.initial_amount,
+                            v.initial_concentration,
                             v.is_constant,
-                            v.is_concentration,
-                            v.has_only_substance_units,
                             v.substance_units,
+                            v.compartment,
+                            v.has_only_substance_units,
+                            v.has_boundary_condition,
                         )
                         for k, v in self.variables.items()
                     ],
@@ -252,9 +275,10 @@ class Model:
             content.append("# Parameters")
             content.append(
                 md_table_from_dict(
-                    headers=["name", "value", "is_constant"],
+                    headers=["name", "value", "is_constant", "unit"],
                     els=[
-                        (k, v.value, v.is_constant) for k, v in self.parameters.items()
+                        (k, v.value, v.is_constant, v.unit)
+                        for k, v in self.parameters.items()
                     ],
                 )
             )

@@ -507,14 +507,14 @@ def handle_ast_constant_false(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
-    return Boolean(False)
+    return Boolean(value=False)
 
 
 def handle_ast_constant_true(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
-    return Boolean(True)
+    return Boolean(value=True)
 
 
 def handle_ast_constant_pi(
