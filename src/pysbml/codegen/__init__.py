@@ -121,19 +121,22 @@ def codegen(model: tdata.Model) -> str:
     # Do calculations
     variable_names = sorted(model.variables)
 
-    initial_assignment_order = _sort_dependencies(
-        available=(set(model.parameters) | set(model.variables))
+    exprs = dict(**model.derived, **{k: rxn.expr for k, rxn in model.reactions.items()})
+    init_exprs = dict(exprs, **model.initial_assignments)
+
+    initial_order = _sort_dependencies(
+        available=(set(model.parameters) | set(model.variables) | {"time"})
         ^ set(model.initial_assignments),
         elements=[
             Dependency(name=name, required=set(free_symbols(expr)))
-            for name, expr in model.initial_assignments.items()
+            for name, expr in init_exprs.items()
         ],
     )
-    derived_order = _sort_dependencies(
+    order = _sort_dependencies(
         available=set(model.parameters) | set(model.variables) | {"time"},
         elements=[
             Dependency(name=name, required=set(free_symbols(expr)))
-            for name, expr in model.derived.items()
+            for name, expr in exprs.items()
         ],
     )
 
@@ -151,6 +154,7 @@ def codegen(model: tdata.Model) -> str:
     source = [
         "import math",
         "import scipy.special",
+        "import pandas as pd",
         "",
         "time: float = 0.0",
     ]
@@ -161,14 +165,9 @@ def codegen(model: tdata.Model) -> str:
     for name, var in model.variables.items():
         source.append(f"{name}: float = {codegen_value(var.value)}")
 
-    for name in derived_order:
-        expr = model.derived[name]
-        source.append(f"{name}: float = {codegen_expr(expr)}")
-
     # Initial assignments
     source.extend(
-        f"{name} = {codegen_expr(model.initial_assignments[name])}"
-        for name in initial_assignment_order
+        f"{name} = {codegen_expr(init_exprs[name])}" for name in initial_order
     )
 
     # Write y0
@@ -186,17 +185,36 @@ def codegen(model: tdata.Model) -> str:
             else f"{INDENT}{variable_names[0]}, = variables"
         )
 
-    for name in derived_order:
-        expr = model.derived[name]
-        source.append(f"{INDENT}{name} = {codegen_expr(expr)}")
-
-    for name, rxn in model.reactions.items():
-        source.append(f"{INDENT}{name} = {codegen_expr(rxn.expr)}")
+    source.extend(
+        f"{INDENT}{name}: float = {codegen_expr(exprs[name])}" for name in order
+    )
 
     for name, eq in diff_eqs.items():
-        source.append(f"{INDENT}d{name}dt = {codegen_expr(eq.subs(1.0, 1))}")
+        source.append(f"{INDENT}d{name}dt: float = {codegen_expr(eq.subs(1.0, 1))}")
 
     returns = (f"d{i}dt" for i in variable_names)
     source.append(f"{INDENT}return {', '.join(returns)}")
+
+    # Additional variables
+    source.append(
+        "\n\ndef derived(time: float, variables: tuple[float, ...]) -> dict[str, float]:"
+    )
+    if len(variable_names) > 0:
+        source.append(
+            f"{INDENT}{', '.join(variable_names)} = variables"
+            if len(variable_names) > 1
+            else f"{INDENT}{variable_names[0]}, = variables"
+        )
+    source.extend(
+        f"{INDENT}{name}: float = float({codegen_expr(exprs[name])})" for name in order
+    )
+
+    source.extend(
+        [
+            f"{INDENT}return {{",
+            *(f"{INDENT * 2}{name!r}: {name}," for name in order),
+            f"{INDENT}}}",
+        ]
+    )
 
     return "\n".join(source)

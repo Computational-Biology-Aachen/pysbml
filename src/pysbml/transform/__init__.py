@@ -115,6 +115,12 @@ def _mul_expr(
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
+def _change(s: str | data.Expr, dc: str | data.Expr) -> sympy.Expr:
+    s = _to_sympy_types(s)
+    dc = _to_sympy_types(dc)
+    return s + (s * dc)  # type: ignore
+
+
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
     if (comp := species.compartment) is None:
         return False
@@ -307,9 +313,25 @@ def _transform_species(
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | True | True", k)
                 tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+
+                if k not in pmodel.rate_rules:
+                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                else:
+                    tmodel.variables[k] = data.Variable(value=init, unit=None)
+
+                # We need the concentration of the boundary species in reactions
+                k_conc = f"{k}_conc"
+                tmodel.derived[k_conc] = _div_expr(k, compartment)
+
+                # Fix reactions
+                for rxn_name in ctx.rxns_by_var[k]:
+                    rxn = tmodel.reactions[rxn_name]
+                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
+
             else:
                 LOGGER.debug("Species %s amount | True | False", k)
                 tmodel.variables[k] = data.Variable(value=init, unit=None)
+
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | False | True", k)
@@ -323,6 +345,22 @@ def _transform_species(
                 k_conc = f"{k}_conc"
                 tmodel.derived[k_conc] = _div_expr(k, compartment)
 
+                # Fix rate rule
+                if (
+                    not pmodel.compartments[compartment].is_constant
+                    and (rr := tmodel.reactions.get(f"d{k}")) is not None
+                ):
+                    rr.expr = expr(rr.expr.subs(compartment, 1)) + _mul_expr(
+                        k, f"d{compartment}"
+                    )  # type: ignore
+
+                # Fix assignment rules (1206)
+                for ar in ctx.ass_rules_by_var[k]:
+                    # There seems to be a case distinction between "normal" variables
+                    # and newly created ones. S4 in test 157 is assumed to be an amount
+                    # x in 1206 a concentration
+                    if ar not in pmodel.variables:
+                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
                 # Fix reactions
                 for rxn_name in ctx.rxns_by_var[k]:
                     rxn = tmodel.reactions[rxn_name]
@@ -351,9 +389,13 @@ def _transform_species(
                         else compartment,
                     )
 
-                # Fix assignment rules
-                # for ar in ctx.ass_rules_by_var[k]:
-                #     tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+                # Fix assignment rules (1206)
+                for ar in ctx.ass_rules_by_var[k]:
+                    # There seems to be a case distinction between "normal" variables
+                    # and newly created ones. S4 in test 157 is assumed to be an amount
+                    # x in 1206 a concentration
+                    if ar not in pmodel.variables:
+                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
 
                 # Fix rate rules
                 if (rr := tmodel.reactions.get(f"d{k}")) is not None:

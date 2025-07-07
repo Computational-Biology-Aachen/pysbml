@@ -47,7 +47,7 @@ deprecateTypingAliases = true
 exclude = [
     "**/__pycache__",
     "tmp",
-    "tests/sbml/assets",
+    "tests/assets",
 ]
 include = [
     "docs",
