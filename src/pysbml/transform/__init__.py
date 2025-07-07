@@ -473,17 +473,17 @@ def _transform_species(
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | False | True", k)
+                # This means the initial value is to be interpreted as an amount
 
                 tmodel.variables[k] = data.Variable(value=init, unit=None)
                 k_amount = f"{k}_amount"
                 tmodel.derived[k_amount] = _div_expr(k, compartment)
 
                 # Fix derived
-                # FIXME: this is really inefficient
-                for dname, der in tmodel.derived.items():
-                    if dname == k_amount:
-                        continue
-                    tmodel.derived[dname] = expr(der.subs(k, k_amount))
+                for dname in ctx.ass_rules_by_var[k]:
+                    tmodel.derived[dname] = expr(
+                        tmodel.derived[dname].subs(k, k_amount)
+                    )
 
                 # Fix rate rules
                 if (rr := tmodel.reactions.get(f"d{k}")) is not None:
@@ -496,6 +496,7 @@ def _transform_species(
                     tmodel.parameters[k] = data.Parameter(value=init, unit=None)
 
                 elif not pmodel.compartments[compartment].is_constant:
+                    LOGGER.debug("Compartment varies")
                     tmodel.variables[k_amount := f"{k}_amount"] = data.Variable(
                         value=init, unit=None
                     )
@@ -525,6 +526,7 @@ def _transform_species(
                             rr.subs(compartment, _div_expr(compartment, compartment))
                         )
 
+                    # Fix reactions
                     for rxn_name in ctx.rxns_by_var[k]:
                         rxn = tmodel.reactions[rxn_name]
 
@@ -557,6 +559,8 @@ def _transform_species(
         # Fall back to interpretation as amount if no evidence for concentration
         # was found
         else:
+            # test 676 assumes amount
+            # test 1513 assumes concentration??
             pmodel.variables[k].initial_amount = 0.0
             _transform_species(k, species, pmodel, tmodel, ctx)
 

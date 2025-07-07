@@ -95,11 +95,13 @@ class Ln(Base):
 
 @dataclass
 class Log(Base):
+    base: Base
     child: Base
 
 
 @dataclass
 class Sqrt(Base):
+    base: Base
     child: Base
 
 
@@ -624,9 +626,10 @@ def handle_ast_function_log(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
-    child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
-    LOGGER.debug("child: %s", child)
-    return Log(child=child)
+    base = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
+    arg = _handle_ast_node(node=node.getChild(1), func_arguments=func_arguments)
+    LOGGER.debug("base: %s, child: %s", base, arg)
+    return Log(base=base, child=arg)
 
 
 def handle_ast_function_max(
@@ -698,9 +701,10 @@ def handle_ast_function_root(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
-    child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
+    base = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
+    child = _handle_ast_node(node=node.getChild(1), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
-    return Sqrt(child=child)
+    return Sqrt(base=base, child=child)
 
 
 def handle_ast_function_rem(

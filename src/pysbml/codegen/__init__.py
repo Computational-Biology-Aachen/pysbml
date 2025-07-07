@@ -166,6 +166,8 @@ def codegen(model: tdata.Model) -> str:
         source.append(f"{name}: float = {codegen_value(var.value)}")
 
     # Initial assignments
+    if len(initial_order) > 0:
+        source.append("\n# Initial assignments")
     source.extend(
         f"{name} = {codegen_expr(init_exprs[name])}" for name in initial_order
     )
@@ -206,7 +208,7 @@ def codegen(model: tdata.Model) -> str:
             else f"{INDENT}{variable_names[0]}, = variables"
         )
     source.extend(
-        f"{INDENT}{name}: float = float({codegen_expr(exprs[name])})" for name in order
+        f"{INDENT}{name}: float = {codegen_expr(exprs[name])}" for name in order
     )
 
     source.extend(

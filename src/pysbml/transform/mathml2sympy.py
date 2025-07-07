@@ -60,10 +60,16 @@ def _handle_node(
             return sympy.floor(_handle_node(value, fns, as_number=True))
         case mathml.Ln(value):
             return sympy.ln(_handle_node(value, fns, as_number=True))
-        case mathml.Log(value):
-            return sympy.log(_handle_node(value, fns, as_number=True), 10)
-        case mathml.Sqrt(value):
-            return sympy.sqrt(_handle_node(value, fns, as_number=True))
+        case mathml.Log(base, value):
+            return sympy.log(
+                _handle_node(value, fns, as_number=True),
+                _handle_node(base, fns, as_number=True),
+            )
+        case mathml.Sqrt(base, value):
+            return sympy.root(
+                _handle_node(value, fns, as_number=True),
+                _handle_node(base, fns, as_number=True),
+            )
         case mathml.Sin(value):
             return sympy.sin(_handle_node(value, fns, as_number=True))
         case mathml.Cos(value):
@@ -149,7 +155,15 @@ def _handle_node(
             return reduce(
                 op.and_,
                 (
-                    a == b
+                    sympy.Eq(a, b)
+                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
+                ),
+            )
+        case mathml.NotEqual(children):
+            return reduce(
+                op.and_,
+                (
+                    sympy.Unequality(a, b)
                     for a, b in it.pairwise(_handle_node(i, fns) for i in children)
                 ),
             )
@@ -178,14 +192,6 @@ def _handle_node(
             return reduce(
                 op.and_,
                 (a < b for a, b in it.pairwise(_handle_node(i, fns) for i in children)),
-            )
-        case mathml.NotEqual(children):
-            return reduce(
-                op.and_,
-                (
-                    a != b
-                    for a, b in it.pairwise(_handle_node(i, fns) for i in children)
-                ),
             )
         case mathml.Piecewise(children):
             # Only treat the second arg is necessarily bool
