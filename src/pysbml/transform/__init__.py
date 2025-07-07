@@ -330,7 +330,18 @@ def _transform_species(
 
             else:
                 LOGGER.debug("Species %s amount | True | False", k)
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
+                k_amount = f"{k}_amount"
+                tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
+
+                tmodel.derived[k] = _div_expr(k_amount, compartment)
+
+                # Fix reactions
+                for rxn_name in ctx.rxns_by_var[k]:
+                    LOGGER.debug("Fixing reaction %s", rxn_name)
+                    rxn = tmodel.reactions[rxn_name]
+
+                    if (s := rxn.stoichiometry.get(k)) is not None:
+                        rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
