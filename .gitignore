@@ -10,4 +10,7 @@ wheels/
 .venv
 
 # User stuff
+tmp/
 temp/
+*tmp.ipynb
+*temp.ipynb

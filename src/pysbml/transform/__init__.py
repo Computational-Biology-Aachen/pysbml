@@ -368,7 +368,7 @@ def _transform_species(
                     if (s := rxn.stoichiometry.get(k)) is not None:
                         rxn.stoichiometry[k] = _mul_expr(s, compartment)
 
-                    # Since we are inserting a concentrating but changing an amount
+                    # Since we are inserting a concentration but changing an amount
                     # we need to remove the compartment
                     rxn.expr = expr(
                         rxn.expr.subs(compartment, _div_expr(compartment, compartment))
@@ -429,6 +429,9 @@ def _transform_species(
                             rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
 
                 else:
+                    LOGGER.debug("Compartment is constant")
+                    # If compartment is constant it's fine to interpret variable as
+                    # concentration
                     tmodel.variables[k] = data.Variable(value=init, unit=None)
                     if (
                         comp := tmodel.initial_assignments.get(compartment)
@@ -443,6 +446,12 @@ def _transform_species(
 
                     for rxn_name in ctx.rxns_by_var[k]:
                         rxn = tmodel.reactions[rxn_name]
+
+                        rxn.expr = expr(
+                            rxn.expr.subs(
+                                compartment, _div_expr(compartment, compartment)
+                            )
+                        )
 
     # Now BOTH of them are None, the whackest case of them all. If you think you can
     # figure out if it is a concentration or amount just by looking at species

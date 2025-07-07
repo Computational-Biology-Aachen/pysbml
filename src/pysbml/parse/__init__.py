@@ -16,11 +16,12 @@ __all__ = [
 ]
 
 
-def parse(lib_model: libsbml.Model, version: int, level: int) -> Model:
+def parse(
+    lib_model: libsbml.Model,
+    level: int,  # Literal[1, 2, 3],
+    version: int,  # Literal[1, 2, 3, 4, 5],
+) -> Model:
     """Parse sbml model."""
-    if version != 2 or level != 3:  # noqa: PLR2004
-        msg = f"Version {version}, level {level} unsupported"
-        raise NotImplementedError(msg)
 
     # FIXME: actually use different parsers here
     match version:
