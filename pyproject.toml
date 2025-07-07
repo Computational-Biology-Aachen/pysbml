@@ -7,6 +7,7 @@ dev = [
     "bandit>=1.8.5",
     "coverage>=7.9.1",
     "ipykernel>=6.29.5",
+    "matplotlib>=3.10.3",
     "mkdocs>=1.6.1",
     "mkdocs-jupyter>=0.25.1",
     "mkdocs-material>=9.6.14",

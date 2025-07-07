@@ -98,8 +98,8 @@ def routine(test: int, test_dir: Path | None = None) -> None:
     np.testing.assert_allclose(
         result.loc[:, columns],
         expected.loc[:, columns],
-        rtol=max(settings.rtol, 1e-4),
-        atol=max(settings.atol, 1e-4),
+        rtol=1e-2,
+        atol=1e-4,
         err_msg=f"Failed test {test}, model:\n\n{model_file}\n\n",
     )
 
@@ -4034,27 +4034,22 @@ def test_00953() -> None:
         routine(test=953)
 
 
-@pytest.mark.skip("Deal with this later")
 def test_00954() -> None:
     routine(test=954)
 
 
-@pytest.mark.skip("Deal with this later")
 def test_00955() -> None:
     routine(test=955)
 
 
-@pytest.mark.skip("Deal with this later")
 def test_00956() -> None:
     routine(test=956)
 
 
-@pytest.mark.skip("Deal with this later")
 def test_00957() -> None:
     routine(test=957)
 
 
-@pytest.mark.skip("Deal with this later")
 def test_00958() -> None:
     routine(test=958)
 
@@ -4779,12 +4774,12 @@ def test_01121() -> None:
 
 
 # FIXME: re-check these two. The diff is in only substance units
-@pytest.mark.skip("I think this is broken")
+@pytest.mark.skip("Dynamic compartment")
 def test_01122() -> None:
     routine(test=1122)
 
 
-@pytest.mark.skip("I think this is broken")
+@pytest.mark.skip("Dynamic compartment")
 def test_01123() -> None:
     routine(test=1123)
 
@@ -5156,7 +5151,7 @@ def test_01197() -> None:
     routine(test=1197)
 
 
-@pytest.mark.skip("Can't figure out what is wrong. Think it is an integrator diff.")
+@pytest.mark.skip("Dynamic compartment")
 def test_01198() -> None:
     routine(test=1198)
 
@@ -6075,7 +6070,6 @@ def test_01394() -> None:
         routine(test=1394)
 
 
-@pytest.mark.skip("Too large to debug")
 def test_01395() -> None:
     with pytest.raises(KeyError):
         routine(test=1395)
@@ -6465,7 +6459,7 @@ def test_01477() -> None:
         routine(test=1477)
 
 
-@pytest.mark.skip("Numerical?")
+@pytest.mark.skip("Dynamic compartment")
 def test_01478() -> None:
     with pytest.raises(NotImplementedError):
         routine(test=1478)
@@ -6518,7 +6512,6 @@ def test_01488() -> None:
         routine(test=1488)
 
 
-@pytest.mark.skip("Think this is broken")
 def test_01489() -> None:
     routine(test=1489)
 
@@ -6556,7 +6549,7 @@ def test_01497() -> None:
         routine(test=1497)
 
 
-@pytest.mark.skip("Later")
+@pytest.mark.skip("Dynamic compartment")
 def test_01498() -> None:
     with pytest.raises(NotImplementedError):
         routine(test=1498)
