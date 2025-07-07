@@ -240,10 +240,18 @@ def _convert_stoich_tuple(x: tuple[float, str]) -> sympy.Expr:
 def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
     for name, rxn in pmodel.reactions.items():
         fn = convert_mathml(rxn.body, fns=tmodel.functions)
-        stoichiometry: data.Stoichiometry = {
-            k: (_convert_stoich_tuple(v) if isinstance(v, tuple) else sympy.Float(v))
-            for k, v in rxn.stoichiometry.items()
-        }
+        stoichiometry: data.Stoichiometry = {}
+        for k, v in rxn.stoichiometry.items():
+            if isinstance(v, list):
+                for tpl in v:
+                    stoichiometry[k] = stoichiometry.get(
+                        k, sympy.Float(0.0)
+                    ) + _convert_stoich_tuple(tpl)  # type: ignore
+            else:
+                stoichiometry[k] = stoichiometry.get(k, sympy.Float(0.0)) + sympy.Float(
+                    v
+                )  # type: ignore
+
         pars_to_replace = {pn: f"{name}_{pn}" for pn in rxn.local_pars}
         fn = expr(fn.subs(pars_to_replace))
         tmodel.reactions[name] = data.Reaction(
@@ -329,11 +337,29 @@ def _transform_species(
                     rxn.expr = expr(rxn.expr.subs(k, k_conc))
 
             else:
+                # Here SBML wants us to use the concentration as the ground thruth,
+                # so we have to replace it everywhere...
                 LOGGER.debug("Species %s amount | True | False", k)
                 k_amount = f"{k}_amount"
                 tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
 
-                tmodel.derived[k] = _div_expr(k_amount, compartment)
+                tmodel.initial_assignments[k_amount] = _mul_expr(init, compartment)
+
+                if k in tmodel.derived:
+                    tmodel.derived[k] = expr(tmodel.derived[k].subs(k, k_amount))
+                else:
+                    tmodel.derived[k] = _div_expr(k_amount, compartment)
+
+                # Fix rate rule
+                if (rxn := tmodel.reactions.get(f"d{k}")) is not None:
+                    rxn.stoichiometry[k_amount] = _mul_expr(
+                        rxn.stoichiometry.pop(k), compartment
+                    )
+
+                # Fix other assignment rules
+                for ar in ctx.ass_rules_by_var[k]:
+                    if ar not in pmodel.variables:
+                        tmodel.derived[ar] = expr(tmodel.derived[ar].subs(k, k_amount))
 
                 # Fix reactions
                 for rxn_name in ctx.rxns_by_var[k]:
@@ -341,7 +367,9 @@ def _transform_species(
                     rxn = tmodel.reactions[rxn_name]
 
                     if (s := rxn.stoichiometry.get(k)) is not None:
-                        rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
+                        rxn.stoichiometry[k_amount] = _mul_expr(
+                            rxn.stoichiometry.pop(k), compartment
+                        )
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:

@@ -325,7 +325,7 @@ def _parse_local_parameters(
 
 def _parse_stoichiometries(
     model: Model, reaction: libsbml.Reaction
-) -> dict[str, int | tuple[float, str]]:
+) -> dict[str, int | list[tuple[float, str]]]:
     """Parse reaction stoichiometries
 
     Stoichiometries can be multiple things
@@ -333,7 +333,7 @@ def _parse_stoichiometries(
     - boundary species
     - references
     """
-    dynamic_stoichiometry: dict[str, tuple[float, str]] = {}
+    dynamic_stoichiometry: dict[str, list[tuple[float, str]]] = {}
     parsed_reactants: defaultdict[str, int] = defaultdict(int)
 
     substrate: libsbml.SpeciesReference
@@ -345,8 +345,9 @@ def _parse_stoichiometries(
             model.parameters[ref] = Parameter(
                 value=substrate.getStoichiometry(), is_constant=False, unit=None
             )
-            # FIXME: this needs to be negative!
-            dynamic_stoichiometry[species] = (-1.0, ref)
+            # Test 1434 has a case where there are multiple references to the same
+            # species...
+            dynamic_stoichiometry.setdefault(species, []).append((-1.0, ref))
 
         # Boundary species can safely be ignored
         elif species not in model.boundary_species:
@@ -361,7 +362,7 @@ def _parse_stoichiometries(
     for product in reaction.getListOfProducts():
         species = name_to_py(product.getSpecies())
         if (ref := product.getId()) != "":
-            dynamic_stoichiometry[species] = (1.0, ref)
+            dynamic_stoichiometry.setdefault(species, []).append((1.0, ref))
             model.parameters[ref] = Parameter(
                 value=product.getStoichiometry(), is_constant=False, unit=None
             )
@@ -413,7 +414,7 @@ def parse(
 
     model = pdata.Model(
         name=lib_model.getName(),  # type: ignore
-        conversion_factor=None
+        conversion_factor=None  # type: ignore
         if (conv := lib_model.getConversionFactor()) == ""
         else conv,
     )

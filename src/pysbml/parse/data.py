@@ -148,7 +148,7 @@ class Function:
 @dataclass(kw_only=True, slots=True)
 class Reaction:
     body: Base
-    stoichiometry: Mapping[str, float | tuple[float, str]]
+    stoichiometry: Mapping[str, float | list[tuple[float, str]]]
     args: list[Symbol]
     local_pars: dict[str, Parameter]
 
