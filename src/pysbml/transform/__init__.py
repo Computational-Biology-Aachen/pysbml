@@ -473,21 +473,29 @@ def _transform_species(
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | False | True", k)
-                # This means the initial value is to be interpreted as an amount
+                # Here we interpret the given name of the species as an amount, but
+                # dynamically track the concentration
 
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                k_amount = f"{k}_amount"
-                tmodel.derived[k_amount] = _div_expr(k, compartment)
-
-                # Fix derived
-                for dname in ctx.ass_rules_by_var[k]:
-                    tmodel.derived[dname] = expr(
-                        tmodel.derived[dname].subs(k, k_amount)
+                if species.is_constant:
+                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                else:
+                    tmodel.variables[k_conc := f"{k}_conc"] = data.Variable(
+                        value=init, unit=None
                     )
 
-                # Fix rate rules
-                if (rr := tmodel.reactions.get(f"d{k}")) is not None:
-                    rr.expr = _mul_expr(rr.expr, compartment)
+                    tmodel.derived[k] = _mul_expr(k_conc, compartment)
+
+                    # Fix derived
+                    for dname in ctx.ass_rules_by_var[k]:
+                        tmodel.derived[dname] = expr(
+                            tmodel.derived[dname].subs(k, k_conc)
+                        )
+
+                    # Fix rate rules
+                    if (
+                        rr := tmodel.reactions.get(f"d{k}")
+                    ) is not None and rr.stoichiometry.get(k) is not None:
+                        rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
 
             else:
                 LOGGER.debug("Species %s: | conc | False | False", k)
@@ -497,18 +505,18 @@ def _transform_species(
 
                 elif not pmodel.compartments[compartment].is_constant:
                     LOGGER.debug("Compartment varies")
-                    tmodel.variables[k_amount := f"{k}_amount"] = data.Variable(
+                    tmodel.variables[k_conc := f"{k}_amount"] = data.Variable(
                         value=init, unit=None
                     )
-                    tmodel.derived[k] = _div_expr(k_amount, compartment)
-                    tmodel.initial_assignments[k_amount] = _mul_expr(
+                    tmodel.derived[k] = _div_expr(k_conc, compartment)
+                    tmodel.initial_assignments[k_conc] = _mul_expr(
                         species.initial_concentration, compartment
                     )
 
                     for rxn_name in ctx.rxns_by_var[k]:
                         rxn = tmodel.reactions[rxn_name]
                         if k in rxn.stoichiometry:
-                            rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
+                            rxn.stoichiometry[k_conc] = rxn.stoichiometry.pop(k)
 
                 else:
                     LOGGER.debug("Compartment is constant")

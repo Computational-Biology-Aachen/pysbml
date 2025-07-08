@@ -4773,13 +4773,10 @@ def test_01121() -> None:
         routine(test=1121)
 
 
-# FIXME: re-check these two. The diff is in only substance units
-@pytest.mark.skip("Dynamic compartment")
 def test_01122() -> None:
     routine(test=1122)
 
 
-@pytest.mark.skip("Dynamic compartment")
 def test_01123() -> None:
     routine(test=1123)
 
@@ -5151,7 +5148,6 @@ def test_01197() -> None:
     routine(test=1197)
 
 
-@pytest.mark.skip("Dynamic compartment")
 def test_01198() -> None:
     routine(test=1198)
 
@@ -6071,8 +6067,7 @@ def test_01394() -> None:
 
 
 def test_01395() -> None:
-    with pytest.raises(KeyError):
-        routine(test=1395)
+    routine(test=1395)
 
 
 def test_01396() -> None:
@@ -6459,10 +6454,8 @@ def test_01477() -> None:
         routine(test=1477)
 
 
-@pytest.mark.skip("Dynamic compartment")
 def test_01478() -> None:
-    with pytest.raises(NotImplementedError):
-        routine(test=1478)
+    routine(test=1478)
 
 
 def test_01479() -> None:
@@ -6549,10 +6542,8 @@ def test_01497() -> None:
         routine(test=1497)
 
 
-@pytest.mark.skip("Dynamic compartment")
 def test_01498() -> None:
-    with pytest.raises(NotImplementedError):
-        routine(test=1498)
+    routine(test=1498)
 
 
 def test_01499() -> None:
