@@ -160,6 +160,8 @@ def codegen(model: tdata.Model) -> str:
     ]
 
     for name, par in model.parameters.items():
+        if name in model.initial_assignments:
+            continue
         source.append(f"{name}: float = {codegen_value(par.value)}")
 
     for name, var in model.variables.items():
