@@ -478,6 +478,11 @@ def _transform_species(
                 tmodel.variables[k] = data.Variable(value=init, unit=None)
                 tmodel.initial_assignments[k] = _mul_expr(init, compartment)
 
+                for dname in ctx.ass_rules_by_var[k]:
+                    tmodel.derived[dname] = _mul_expr(
+                        tmodel.derived[dname], compartment
+                    )
+
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | False | True", k)
