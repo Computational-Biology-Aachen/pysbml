@@ -207,7 +207,9 @@ def codegen(model: tdata.Model) -> str:
         source.append(f"{INDENT}{name}: float = {codegen_expr(exprs[name])}")
 
     for name, eq in diff_eqs.items():
-        source.append(f"{INDENT}d{name}dt: float = {codegen_expr(eq.subs(1.0, 1))}")
+        source.append(
+            f"{INDENT}d{name}dt: float = {codegen_expr(cast(sympy.Expr, eq.subs(1.0, 1)))}"
+        )
 
     returns = (f"d{i}dt" for i in variable_names)
     source.append(f"{INDENT}return {', '.join(returns)}")
