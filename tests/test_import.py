@@ -61,7 +61,7 @@ def get_files(
 def routine(test: int, test_dir: Path | None = None) -> None:
     test_dir = ASSET_PATH if test_dir is None else test_dir
     doc, settings, expected = get_files(test, test_dir=test_dir)
-    model_file = codegen(transform(doc))
+    model_file = codegen(*transform(doc))
 
     module = types.ModuleType(f"model{test}")
     exec(model_file, module.__dict__)  # noqa: S102
@@ -69,6 +69,7 @@ def routine(test: int, test_dir: Path | None = None) -> None:
     derived: Callable[[float, Iterable[float]], Iterable[float]] = module.derived
     y0: Iterable[float] = module.y0
     variable_names: list[str] = module.variable_names
+    variable_map: dict[str, str] = module.variable_map
 
     t = expected.index
     sol = solve_ivp(
@@ -93,6 +94,7 @@ def routine(test: int, test_dir: Path | None = None) -> None:
         ),
         axis=1,
     )
+    result = result.rename(columns={v: k for k, v in variable_map.items()})
     columns: list[str] = list(expected.columns.intersection(result.columns))
 
     np.testing.assert_allclose(

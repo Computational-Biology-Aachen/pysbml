@@ -117,7 +117,7 @@ def _mul_expr(
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
-def codegen(model: tdata.Model) -> str:
+def codegen(model: tdata.Model, variable_map: dict[str, str]) -> str:
     # Do calculations
     variable_names = sorted(model.variables)
 
@@ -126,7 +126,7 @@ def codegen(model: tdata.Model) -> str:
 
     initial_order = _sort_dependencies(
         available=(set(model.parameters) | set(model.variables) | {"time"})
-        ^ set(model.initial_assignments),
+        - set(model.initial_assignments),
         elements=[
             Dependency(name=name, required=set(free_symbols(expr)))
             for name, expr in init_exprs.items()
@@ -218,5 +218,8 @@ def codegen(model: tdata.Model) -> str:
             f"{INDENT}}}",
         ]
     )
+
+    # Name map
+    source.append(f"variable_map = {variable_map!r}")
 
     return "\n".join(source)

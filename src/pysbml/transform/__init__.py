@@ -65,7 +65,7 @@ Source: https://sbml.org/software/libsbml/5.18.0/docs/formatted/python-api/class
 import logging
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from operator import mul
 from typing import cast
@@ -89,6 +89,7 @@ def expr(x: data.Expr | sympy.Basic) -> sympy.Expr:
 class Ctx:
     rxns_by_var: defaultdict[str, set[str]]
     ass_rules_by_var: defaultdict[str, set[str]]
+    name_conv: dict[str, str] = field(default_factory=dict)
 
 
 def _to_sympy_types(
@@ -102,23 +103,17 @@ def _to_sympy_types(
 
 
 def _div_expr(
-    x: str | float | data.Expr,
-    y: str | float | data.Expr,
+    x: str | float | data.Expr | sympy.Basic,
+    y: str | float | data.Expr | sympy.Basic,
 ) -> sympy.Expr:
     return _to_sympy_types(x) / _to_sympy_types(y)  # type: ignore
 
 
 def _mul_expr(
-    x: str | float | data.Expr,
-    y: str | float | data.Expr,
+    x: str | float | data.Expr | sympy.Basic,
+    y: str | float | data.Expr | sympy.Basic,
 ) -> sympy.Expr:
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
-
-
-def _change(s: str | data.Expr, dc: str | data.Expr) -> sympy.Expr:
-    s = _to_sympy_types(s)
-    dc = _to_sympy_types(dc)
-    return s + (s * dc)  # type: ignore
 
 
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
@@ -286,6 +281,9 @@ def _transform_species(
     if species.conversion_factor is not None:
         raise NotImplementedError
 
+    amnt = f"{k}_amnt"
+    conc = f"{k}_conc"
+
     init = sympy.Float(
         init
         if (init := species.initial_amount) is not None
@@ -297,14 +295,15 @@ def _transform_species(
     # Easiest is to check first if the compartment is valid
     # If not, our life is significantly easier, because there really are just two choices
     if not compartment_is_valid(pmodel, species=species):
+        ctx.name_conv[k] = conc
         if variable_is_constant(k, pmodel):
-            tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+            tmodel.parameters[conc] = data.Parameter(value=init, unit=None)
             return
 
-        tmodel.variables[k] = data.Variable(value=init, unit=None)
+        tmodel.variables[conc] = data.Variable(value=init, unit=None)
         return
 
-    # Compartment is valid as in exists and is non-zero / nan
+    # Compartment is valid as in: it exists and is non-zero / nan
     compartment = cast(str, species.compartment)
 
     # Now the garbage begins
@@ -315,234 +314,226 @@ def _transform_species(
     # Let's separate next by is_concentration / is_amount / is_to_be_determined :')
     # Because of course some of them are annotated without either conc or amount
 
+    # Let's always create both _amount and _conc variants and then map them to
+    # the required given name
+
+    for name in ctx.rxns_by_var[k]:
+        rxn = tmodel.reactions[name]
+        rxn.expr = expr(rxn.expr.subs(compartment, 1))
+
+    # If there is a dynamic variable, always use concentration
+    # This way, we can always get rid of the comparment an unify stoichiometries et
+
     # We have an amount here
     if species.initial_amount is not None:
         if species.has_only_substance_units:
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | True | True", k)
-                tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                ctx.name_conv[k] = amnt
 
                 if k not in pmodel.rate_rules:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                    tmodel.derived[conc] = _div_expr(amnt, compartment)
+                    tmodel.parameters[amnt] = data.Parameter(value=init, unit=None)
                 else:
-                    tmodel.variables[k] = data.Variable(value=init, unit=None)
+                    tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                    tmodel.derived[amnt] = _mul_expr(conc, compartment)
 
-                # We need the concentration of the boundary species in reactions
-                k_conc = f"{k}_conc"
-                tmodel.derived[k_conc] = _div_expr(k, compartment)
-
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
-
-            else:
-                # Here SBML wants us to use the concentration as the ground thruth,
-                # so we have to replace it everywhere...
-                LOGGER.debug("Species %s amount | True | False", k)
-                k_amount = f"{k}_amount"
-                tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
-
-                tmodel.initial_assignments[k_amount] = _mul_expr(init, compartment)
-
-                if k in tmodel.derived:
-                    tmodel.derived[k] = expr(tmodel.derived[k].subs(k, k_amount))
-                else:
-                    tmodel.derived[k] = _div_expr(k_amount, compartment)
-
-                # Fix rate rule
-                if (rxn := tmodel.reactions.get(f"d{k}")) is not None:
-                    rxn.stoichiometry[k_amount] = _mul_expr(
-                        rxn.stoichiometry.pop(k), compartment
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = _div_expr(
+                        expr(tmodel.initial_assignments.pop(k).subs(k, conc)),
+                        compartment,
                     )
 
-                # Fix other assignment rules
-                for ar in ctx.ass_rules_by_var[k]:
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = expr(tmodel.derived[ar].subs(k, k_amount))
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.stoichiometry[conc] = _div_expr(
+                        name.stoichiometry.pop(k), compartment
+                    )
 
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    LOGGER.debug("Fixing reaction %s", rxn_name)
-                    rxn = tmodel.reactions[rxn_name]
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    tmodel.derived[name] = _div_expr(tmodel.derived[name], compartment)
 
-                    if (s := rxn.stoichiometry.get(k)) is not None:
-                        rxn.stoichiometry[k_amount] = _mul_expr(
-                            rxn.stoichiometry.pop(k), compartment
-                        )
+            else:
+                LOGGER.debug("Species %s amount | True | False", k)
+                ctx.name_conv[k] = amnt
+
+                # init is amount, fix this in initial assignment
+                tmodel.variables[conc] = data.Variable(
+                    value=sympy.Float(0.0), unit=None
+                )
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
+
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = _div_expr(
+                        tmodel.initial_assignments.pop(k), compartment
+                    )
+                else:
+                    tmodel.initial_assignments[conc] = _div_expr(init, compartment)
+
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.stoichiometry[conc] = _div_expr(
+                        name.stoichiometry.pop(k), compartment
+                    )
+
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    tmodel.derived[name] = _div_expr(tmodel.derived[name], compartment)
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | False | True", k)
+                ctx.name_conv[k] = amnt
 
                 if k not in pmodel.rate_rules:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                    tmodel.derived[conc] = _div_expr(amnt, compartment)
+                    tmodel.parameters[amnt] = data.Parameter(value=init, unit=None)
                 else:
-                    tmodel.variables[k] = data.Variable(value=init, unit=None)
+                    tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                    tmodel.derived[amnt] = _mul_expr(conc, compartment)
 
-                # We need the concentration of the boundary species in reactions
-                k_conc = f"{k}_conc"
-                tmodel.derived[k_conc] = _div_expr(k, compartment)
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = _div_expr(
+                        tmodel.initial_assignments.pop(k), compartment
+                    )
+                else:
+                    tmodel.initial_assignments[conc] = _div_expr(init, compartment)
 
                 # Fix rate rule
-                if (
-                    not pmodel.compartments[compartment].is_constant
-                    and (rr := tmodel.reactions.get(f"d{k}")) is not None
-                ):
-                    rr.expr = expr(rr.expr.subs(compartment, 1)) + _mul_expr(
-                        k, f"d{compartment}"
-                    )  # type: ignore
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.stoichiometry[conc] = _div_expr(
+                        name.stoichiometry.pop(k), compartment
+                    )
 
-                # Fix assignment rules (1206)
-                for ar in ctx.ass_rules_by_var[k]:
-                    # There seems to be a case distinction between "normal" variables
-                    # and newly created ones. S4 in test 157 is assumed to be an amount
-                    # x in 1206 a concentration
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    tmodel.derived[name] = _div_expr(tmodel.derived[name], compartment)
 
             else:
                 LOGGER.debug("Species %s: amount | False | False", k)
-                # This is the default case for most tests
-                # We have an amount, that has to be interpreted as a concentration
-                # in e.g. reactions, but then the integration has to yield an amount again
-                # So divide variable/compartment, but calculate flux*compartment
+                ctx.name_conv[k] = amnt
 
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
+                # init is amount, fix this in initial assignment
+                tmodel.variables[conc] = data.Variable(
+                    value=sympy.Float(0.0), unit=None
+                )
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
 
-                # Fix initial assignment rule
-                if (ar := tmodel.initial_assignments.get(k)) is not None:
-                    LOGGER.debug("Initial assignmet for species %s", k)
-                    # If initial assignment updates compartment, use the expression
-                    # of the updated compartment
-                    tmodel.initial_assignments[k] = _mul_expr(
-                        ar,
-                        comp
-                        if (comp := tmodel.initial_assignments.get(compartment))
-                        is not None
-                        else compartment,
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = _div_expr(
+                        tmodel.initial_assignments.pop(k).subs(k, amnt), compartment
                     )
+                else:
+                    tmodel.initial_assignments[conc] = _div_expr(init, compartment)
 
-                # Fix assignment rules (1206)
-                for ar in ctx.ass_rules_by_var[k]:
-                    # There seems to be a case distinction between "normal" variables
-                    # and newly created ones. S4 in test 157 is assumed to be an amount
-                    # x in 1206 a concentration
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+                # Fix rate rule
+                if (rxn := tmodel.reactions.pop(f"d{k}", None)) is not None:
+                    tmodel.reactions[f"d{conc}"] = rxn
 
-                # Fix rate rules
-                if (rr := tmodel.reactions.get(f"d{k}")) is not None:
-                    rr.stoichiometry = {k: sympy.Symbol(compartment)}
-                    # rr.stoichiometry = {k: sympy.Float(1.0)}
-
-                # Fix reaction
-                for rxn_name in ctx.rxns_by_var[k]:
-                    LOGGER.debug("Fixing reaction %s", rxn_name)
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
-                    if (s := rxn.stoichiometry.get(k)) is not None:
-                        rxn.stoichiometry[k] = _mul_expr(s, compartment)
-
-                    # Since we are inserting a concentration but changing an amount
-                    # we need to remove the compartment
-                    rxn.expr = expr(
-                        rxn.expr.subs(compartment, _div_expr(compartment, compartment))
-                    )
+                # Fix assignment rule
+                if (der := tmodel.derived.pop(k, None)) is not None:
+                    tmodel.derived[conc] = _div_expr(der, compartment)
 
     # We have a concentration here
     elif species.initial_concentration is not None:
-        # If it IS a concentration but has only substance units
-        # is set, we have to multiply it by the compartment initially
         if species.has_only_substance_units:
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | True | True", k)
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+                ctx.name_conv[k] = conc
+
+                tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
+
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = expr(
+                        tmodel.initial_assignments.pop(k).subs(k, conc)
+                    )
+
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.expr = expr(name.expr.subs(k, conc))
+                    name.stoichiometry[conc] = name.stoichiometry.pop(k)
+
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    rule = tmodel.derived[name]
+                    tmodel.derived[name] = expr(rule.subs(k, conc))
 
             else:
                 LOGGER.debug("Species %s: | conc | True | False", k)
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+                ctx.name_conv[k] = conc
+
+                tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
+
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = expr(
+                        tmodel.initial_assignments.pop(k).subs(k, conc)
+                    )
+
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.expr = expr(name.expr.subs(k, conc))
+                    name.stoichiometry[conc] = name.stoichiometry.pop(k)
+
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    rule = tmodel.derived[name]
+                    tmodel.derived[name] = expr(rule.subs(k, conc))
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | False | True", k)
-                # Here we interpret the given name of the species as an amount, but
-                # dynamically track the concentration
+                ctx.name_conv[k] = conc
 
-                if species.is_constant:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-                else:
-                    tmodel.variables[k_conc := f"{k}_conc"] = data.Variable(
-                        value=init, unit=None
+                tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
+
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = expr(
+                        tmodel.initial_assignments.pop(k).subs(k, conc)
                     )
 
-                    tmodel.derived[k] = _mul_expr(k_conc, compartment)
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.expr = expr(name.expr.subs(k, conc))
+                    name.stoichiometry[conc] = name.stoichiometry.pop(k)
 
-                    # Fix derived
-                    for dname in ctx.ass_rules_by_var[k]:
-                        tmodel.derived[dname] = expr(
-                            tmodel.derived[dname].subs(k, k_conc)
-                        )
-
-                    # Fix rate rules
-                    if (
-                        rr := tmodel.reactions.get(f"d{k}")
-                    ) is not None and rr.stoichiometry.get(k) is not None:
-                        rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    rule = tmodel.derived[name]
+                    tmodel.derived[name] = expr(rule.subs(k, conc))
 
             else:
                 LOGGER.debug("Species %s: | conc | False | False", k)
+                ctx.name_conv[k] = conc
 
-                if species.is_constant:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+                tmodel.variables[conc] = data.Variable(value=init, unit=None)
+                tmodel.derived[amnt] = _mul_expr(conc, compartment)
 
-                elif not pmodel.compartments[compartment].is_constant:
-                    LOGGER.debug("Compartment varies")
-                    tmodel.variables[k_conc := f"{k}_amount"] = data.Variable(
-                        value=init, unit=None
-                    )
-                    tmodel.derived[k] = _div_expr(k_conc, compartment)
-                    tmodel.initial_assignments[k_conc] = _mul_expr(
-                        species.initial_concentration, compartment
+                # Fix initial assignment
+                if k in tmodel.initial_assignments:
+                    tmodel.initial_assignments[conc] = expr(
+                        tmodel.initial_assignments.pop(k).subs(k, conc)
                     )
 
-                    for rxn_name in ctx.rxns_by_var[k]:
-                        rxn = tmodel.reactions[rxn_name]
-                        if k in rxn.stoichiometry:
-                            rxn.stoichiometry[k_conc] = rxn.stoichiometry.pop(k)
+                # Fix rate rule
+                if (name := tmodel.reactions.get(f"d{k}")) is not None:
+                    name.expr = expr(name.expr.subs(k, conc))
+                    name.stoichiometry[conc] = name.stoichiometry.pop(k)
 
-                else:
-                    LOGGER.debug("Compartment is constant")
-                    # If compartment is constant it's fine to interpret variable as
-                    # concentration
-                    tmodel.variables[k] = data.Variable(value=init, unit=None)
-                    if (
-                        comp := tmodel.initial_assignments.get(compartment)
-                    ) is not None:
-                        tmodel.initial_assignments[k] = _mul_expr(init, comp)
-
-                    # Fix rate rules
-                    if (rr := tmodel.derived.get(f"d{k}")) is not None:
-                        tmodel.derived[f"d{k}"] = expr(
-                            rr.subs(compartment, _div_expr(compartment, compartment))
-                        )
-
-                    # Fix reactions
-                    for rxn_name in ctx.rxns_by_var[k]:
-                        rxn = tmodel.reactions[rxn_name]
-
-                        rxn.expr = expr(
-                            rxn.expr.subs(
-                                compartment, _div_expr(compartment, compartment)
-                            )
-                        )
+                # Fix assignment rules
+                for name in ctx.ass_rules_by_var[k]:
+                    rule = tmodel.derived[name]
+                    tmodel.derived[name] = expr(rule.subs(k, conc))
 
     # Now BOTH of them are None, the whackest case of them all. If you think you can
     # figure out if it is a concentration or amount just by looking at species
@@ -574,12 +565,24 @@ def _transform_species(
 
 
 def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
+    subs = {k: f"{k}_conc" for k in pmodel.variables}
+
+    for name, init in tmodel.initial_assignments.items():
+        tmodel.initial_assignments[name] = expr(init.subs(subs))
+
+    for name, der in tmodel.derived.items():
+        tmodel.derived[name] = expr(der.subs(subs))
+
+    for rxn in tmodel.reactions.values():
+        rxn.expr = expr(rxn.expr.subs(subs))
+        rxn.stoichiometry = {subs.get(k, k): v for k, v in rxn.stoichiometry.items()}
+
     LOGGER.debug("Species name | type | only subs. | boundary cond.")
     for k, var in pmodel.variables.items():
         _transform_species(k, var, pmodel, tmodel, ctx=ctx)
 
 
-def transform(doc: pdata.Document) -> data.Model:
+def transform(doc: pdata.Document) -> tuple[data.Model, dict[str, str]]:
     for plugin in doc.plugins:
         if plugin.name == "comp":
             msg = "Comp package not yet supported."
@@ -613,4 +616,4 @@ def transform(doc: pdata.Document) -> data.Model:
     # Do the heavy lifting here
     transform_species(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
     remove_duplicate_entries(tmodel=tmodel)
-    return tmodel
+    return tmodel, ctx.name_conv
