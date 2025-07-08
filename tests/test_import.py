@@ -4248,7 +4248,11 @@ def test_00998() -> None:
 
 
 @pytest.mark.skip("""Various variants of amount / conc and constant / dynamic compartment. \
-                  Related to the issue of 1498. \
+                  Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
+                  We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_00999() -> None:
     with pytest.raises(NotImplementedError):
@@ -5644,14 +5648,20 @@ def test_01306() -> None:
 
 
 @pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01307() -> None:
     routine(test=1307)
 
 
 @pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01308() -> None:
     routine(test=1308)
@@ -6548,11 +6558,11 @@ def test_01497() -> None:
         routine(test=1497)
 
 
-@pytest.mark.skip("""I don't understand the initial condition here. S2 (1.0) is a \
-                  concentration and lives in C1. C1 is dynamic, so it makes sense that \
-                  the concentration is affected by this once it changes.
-                  But **initially** it shouldn't, because there is no initial assignment
-                  for C1.
+@pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
+                  We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01498() -> None:
     routine(test=1498)
@@ -6628,13 +6638,23 @@ def test_01512() -> None:
         routine(test=1512)
 
 
-@pytest.mark.skip("Arbitrary choice of conc vs amount")
+@pytest.mark.skip(""""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
+                  We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  """)
 def test_01513() -> None:
     with pytest.raises(NotImplementedError):
         routine(test=1513)
 
 
-@pytest.mark.skip("Arbitrary choice of conc vs amount")
+@pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
+                  We don't need to support this
+
+                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  """)
 def test_01514() -> None:
     with pytest.raises(NotImplementedError):
         routine(test=1514)
