@@ -4247,7 +4247,9 @@ def test_00998() -> None:
     routine(test=998)
 
 
-@pytest.mark.skip("I think this one is broken")
+@pytest.mark.skip("""Various variants of amount / conc and constant / dynamic compartment. \
+                  Related to the issue of 1498. \
+                  """)
 def test_00999() -> None:
     with pytest.raises(NotImplementedError):
         routine(test=999)
@@ -6542,6 +6544,12 @@ def test_01497() -> None:
         routine(test=1497)
 
 
+@pytest.mark.skip("""I don't understand the initial condition here. S2 (1.0) is a \
+                  concentration and lives in C1. C1 is dynamic, so it makes sense that \
+                  the concentration is affected by this once it changes.
+                  But **initially** it shouldn't, because there is no initial assignment
+                  for C1.
+                  """)
 def test_01498() -> None:
     routine(test=1498)
 

@@ -400,10 +400,18 @@ def _transform_species(
                     # x in 1206 a concentration
                     if ar not in pmodel.variables:
                         tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+
                 # Fix reactions
                 for rxn_name in ctx.rxns_by_var[k]:
                     rxn = tmodel.reactions[rxn_name]
                     rxn.expr = expr(rxn.expr.subs(k, k_conc))
+
+                    # Fix test 1122: if we are inserting a concentration, we need
+                    # to treat all other variables as concentrations as well
+                    rxn.stoichiometry = {
+                        k: expr(v.subs(compartment, 1))
+                        for k, v in rxn.stoichiometry.items()
+                    }
 
             else:
                 LOGGER.debug("Species %s: amount | False | False", k)
