@@ -5643,12 +5643,16 @@ def test_01306() -> None:
     routine(test=1306)
 
 
-@pytest.mark.skip("Check again")
+@pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  We don't need to support this
+                  """)
 def test_01307() -> None:
     routine(test=1307)
 
 
-@pytest.mark.skip("Check again")
+@pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  We don't need to support this
+                  """)
 def test_01308() -> None:
     routine(test=1308)
 
@@ -6919,7 +6923,6 @@ def test_01573() -> None:
         routine(test=1573)
 
 
-@pytest.mark.skip("I think this is broken")
 def test_01574() -> None:
     routine(test=1574)
 

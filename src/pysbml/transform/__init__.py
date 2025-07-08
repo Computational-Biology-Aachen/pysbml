@@ -555,6 +555,9 @@ def _transform_species(
     # Now BOTH of them are None, the whackest case of them all. If you think you can
     # figure out if it is a concentration or amount just by looking at species
     # and compartments, boy do I have a surprise for you :)
+    # The documentation states you can use species.has_only_substance_units for this
+    # which is false, as test cases 676 and 688 demonstrate. There S1 sets this as false
+    # still it is being used as a concentration or an amount respectively
     else:
         is_concentration = False
         for rxn_name in ctx.rxns_by_var[k]:
