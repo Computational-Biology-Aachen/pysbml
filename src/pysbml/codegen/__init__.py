@@ -132,6 +132,7 @@ def codegen(model: tdata.Model) -> str:
             for name, expr in init_exprs.items()
         ],
     )
+
     order = _sort_dependencies(
         available=set(model.parameters) | set(model.variables) | {"time"},
         elements=[
@@ -140,12 +141,21 @@ def codegen(model: tdata.Model) -> str:
         ],
     )
 
-    diff_eqs = {}
+    diff_eqs: dict[str, sympy.Expr] = {}
     for name, rxn in model.reactions.items():
         for var, stoich in rxn.stoichiometry.items():
             diff_eqs[var] = sympy.Add(
                 diff_eqs.get(var, sympy.Float(0.0)), _mul_expr(stoich, name)
             )
+
+    all_args = set()
+    for derived in model.derived.values():
+        all_args.update(free_symbols(derived))
+    for rxn in model.reactions.values():
+        all_args.update(free_symbols(rxn.expr))
+        all_args.update(rxn.stoichiometry)
+    for diff_eq in diff_eqs.values():
+        all_args.update(free_symbols(diff_eq))
 
     # Not all variables always have an equation, because fuck why
     variable_names = [i for i in variable_names if i in diff_eqs]
@@ -191,9 +201,10 @@ def codegen(model: tdata.Model) -> str:
             else f"{INDENT}{variable_names[0]}, = variables"
         )
 
-    source.extend(
-        f"{INDENT}{name}: float = {codegen_expr(exprs[name])}" for name in order
-    )
+    for name in order:
+        if name not in all_args:
+            continue
+        source.append(f"{INDENT}{name}: float = {codegen_expr(exprs[name])}")
 
     for name, eq in diff_eqs.items():
         source.append(f"{INDENT}d{name}dt: float = {codegen_expr(eq.subs(1.0, 1))}")
