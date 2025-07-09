@@ -273,6 +273,70 @@ def remove_duplicate_entries(tmodel: data.Model) -> None:
             del tmodel.variables[name]
 
 
+def _handle_amount(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """This is the default case for most tests. We are given an species in an amount.
+
+    SBML reactions are written in a way that contains the compartment, e.g.
+
+    | Reaction                     | Unit       | Test examples |
+    | C * S1 * k1 [1/s]            | L * mol/s  | 1             |
+    | C * S1 * S2 * k1 [L/(mol*s)] | L^2*mol/s  | 52, 76        |
+
+    This means the stoichiometries need to be adjusted accordingly
+        1 substrate  => rxn / C
+        2 substrates => rxn / C^2
+    and so on
+
+
+    """
+    tmodel.variables[k] = data.Variable(value=init, unit=None)
+    tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
+
+    # Fix initial assignment rule
+    if (ar := tmodel.initial_assignments.get(k)) is not None:
+        LOGGER.debug("Initial assignmet for species %s", k)
+        # If initial assignment updates compartment, use the expression
+        # of the updated compartment
+        tmodel.initial_assignments[k] = _mul_expr(
+            ar,
+            comp
+            if (comp := tmodel.initial_assignments.get(compartment)) is not None
+            else compartment,
+        )
+
+    # Fix assignment rules (1206)
+    for ar in ctx.ass_rules_by_var[k]:
+        # There seems to be a case distinction between "normal" variables
+        # and newly created ones. S4 in test 157 is assumed to be an amount
+        # x in 1206 a concentration
+        if ar not in pmodel.variables:
+            tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+
+    # Fix rate rules
+    if (rr := tmodel.reactions.get(f"d{k}")) is not None:
+        rr.stoichiometry = {k: sympy.Symbol(compartment)}
+        # rr.stoichiometry = {k: sympy.Float(1.0)}
+
+    # Fix reaction
+    for rxn_name in ctx.rxns_by_var[k]:
+        LOGGER.debug("Fixing reaction %s", rxn_name)
+        rxn = tmodel.reactions[rxn_name]
+        rxn.expr = expr(rxn.expr.subs(k, k_conc))
+        if (s := rxn.stoichiometry.get(k)) is not None:
+            rxn.stoichiometry[k] = _mul_expr(s, compartment)
+
+        # Since we are inserting a concentration but changing an amount
+        # we need to remove the compartment
+        rxn.expr = expr(rxn.expr.subs(compartment, _div_expr(compartment, compartment)))
+
+
 def _transform_species(
     k: str,
     species: pdata.Species,
@@ -366,10 +430,8 @@ def _transform_species(
                     LOGGER.debug("Fixing reaction %s", rxn_name)
                     rxn = tmodel.reactions[rxn_name]
 
-                    if (s := rxn.stoichiometry.get(k)) is not None:
-                        rxn.stoichiometry[k_amount] = _mul_expr(
-                            rxn.stoichiometry.pop(k), compartment
-                        )
+                    if (s := rxn.stoichiometry.pop(k, None)) is not None:
+                        rxn.stoichiometry[k_amount] = _mul_expr(s, compartment)
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
@@ -415,53 +477,14 @@ def _transform_species(
 
             else:
                 LOGGER.debug("Species %s: amount | False | False", k)
-                # This is the default case for most tests
-                # We have an amount, that has to be interpreted as a concentration
-                # in e.g. reactions, but then the integration has to yield an amount again
-                # So divide variable/compartment, but calculate flux*compartment
-
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
-
-                # Fix initial assignment rule
-                if (ar := tmodel.initial_assignments.get(k)) is not None:
-                    LOGGER.debug("Initial assignmet for species %s", k)
-                    # If initial assignment updates compartment, use the expression
-                    # of the updated compartment
-                    tmodel.initial_assignments[k] = _mul_expr(
-                        ar,
-                        comp
-                        if (comp := tmodel.initial_assignments.get(compartment))
-                        is not None
-                        else compartment,
-                    )
-
-                # Fix assignment rules (1206)
-                for ar in ctx.ass_rules_by_var[k]:
-                    # There seems to be a case distinction between "normal" variables
-                    # and newly created ones. S4 in test 157 is assumed to be an amount
-                    # x in 1206 a concentration
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
-
-                # Fix rate rules
-                if (rr := tmodel.reactions.get(f"d{k}")) is not None:
-                    rr.stoichiometry = {k: sympy.Symbol(compartment)}
-                    # rr.stoichiometry = {k: sympy.Float(1.0)}
-
-                # Fix reaction
-                for rxn_name in ctx.rxns_by_var[k]:
-                    LOGGER.debug("Fixing reaction %s", rxn_name)
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
-                    if (s := rxn.stoichiometry.get(k)) is not None:
-                        rxn.stoichiometry[k] = _mul_expr(s, compartment)
-
-                    # Since we are inserting a concentration but changing an amount
-                    # we need to remove the compartment
-                    rxn.expr = expr(
-                        rxn.expr.subs(compartment, _div_expr(compartment, compartment))
-                    )
+                _handle_amount(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    pmodel=pmodel,
+                    tmodel=tmodel,
+                    ctx=ctx,
+                )
 
     # We have a concentration here
     elif species.initial_concentration is not None:
