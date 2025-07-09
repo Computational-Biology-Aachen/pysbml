@@ -277,7 +277,6 @@ def _handle_amount(
     k: str,
     compartment: str,
     init: sympy.Float,
-    pmodel: pdata.Model,
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
@@ -285,15 +284,42 @@ def _handle_amount(
 
     SBML reactions are written in a way that contains the compartment, e.g.
 
-    | Reaction                     | Unit       | Test examples |
-    | C * S1 * k1 [1/s]            | L * mol/s  | 1             |
-    | C * S1 * S2 * k1 [L/(mol*s)] | L^2*mol/s  | 52, 76        |
+    | Reaction         | k1 Unit   | Unit      | Test examples |
+    | ---------------- | --------- | --------- |               |
+    | C * S1 * k1      | 1/s       | L * mol/s | 1             |
+    | C * S1 * S2 * k1 | L/(mol*s) | L^2*mol/s | 52, 76        |
+    | C * S1^2 * k1    | L/(mol*s) | L^2*mol/s | 52, 76        |
+
 
     This means the stoichiometries need to be adjusted accordingly
         1 substrate  => rxn / C
         2 substrates => rxn / C^2
     and so on
 
+    *Counting* this out is in principle doable, but annoying.
+
+    So let's transform the amounts into concentrations instead. This gives a somewhat
+    sub-optimal representation because we need to do more work per integration step, but
+    is much easier to handle.
+
+    Steps:
+      - derive concentration as amount / compartment
+      - substitute amount with concentration in reactions & rules
+      - remove compartment from reactions & rules
+      - multiply stoichiometry by compartment to get amount again
+
+    Initial assignment
+      - initial assignments are apparently also given in units of concentration so we
+        need to multiply by the compartment here
+      - if the compartment also has an initial assignment, use the updated value
+        (this should be handled by sorting the dependencies in our case)
+
+    Assignment rules (676, 677, 678)
+      - assigns an amount and is given an amount, nothing to fix here
+
+    Rate rules
+      - they are always given in units of concentration, so we need to multiply
+        by the concentration to get an amount
 
     """
     tmodel.variables[k] = data.Variable(value=init, unit=None)
@@ -301,40 +327,29 @@ def _handle_amount(
 
     # Fix initial assignment rule
     if (ar := tmodel.initial_assignments.get(k)) is not None:
-        LOGGER.debug("Initial assignmet for species %s", k)
-        # If initial assignment updates compartment, use the expression
-        # of the updated compartment
-        tmodel.initial_assignments[k] = _mul_expr(
-            ar,
-            comp
-            if (comp := tmodel.initial_assignments.get(compartment)) is not None
-            else compartment,
-        )
+        tmodel.initial_assignments[k] = _mul_expr(ar, compartment)
 
-    # Fix assignment rules (1206)
-    for ar in ctx.ass_rules_by_var[k]:
-        # There seems to be a case distinction between "normal" variables
-        # and newly created ones. S4 in test 157 is assumed to be an amount
-        # x in 1206 a concentration
-        if ar not in pmodel.variables:
-            tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
+    # Fix assignment rules
+    # Nothing to do here :)
 
-    # Fix rate rules
+    # Fix rate rule
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
         rr.stoichiometry = {k: sympy.Symbol(compartment)}
-        # rr.stoichiometry = {k: sympy.Float(1.0)}
 
     # Fix reaction
     for rxn_name in ctx.rxns_by_var[k]:
-        LOGGER.debug("Fixing reaction %s", rxn_name)
         rxn = tmodel.reactions[rxn_name]
-        rxn.expr = expr(rxn.expr.subs(k, k_conc))
+
+        rxn.expr = expr(
+            rxn.expr.subs(
+                {
+                    compartment: 1,
+                    k: k_conc,
+                }
+            )
+        )
         if (s := rxn.stoichiometry.get(k)) is not None:
             rxn.stoichiometry[k] = _mul_expr(s, compartment)
-
-        # Since we are inserting a concentration but changing an amount
-        # we need to remove the compartment
-        rxn.expr = expr(rxn.expr.subs(compartment, _div_expr(compartment, compartment)))
 
 
 def _transform_species(
@@ -481,7 +496,6 @@ def _transform_species(
                     k=k,
                     compartment=compartment,
                     init=init,
-                    pmodel=pmodel,
                     tmodel=tmodel,
                     ctx=ctx,
                 )
@@ -527,7 +541,7 @@ def _transform_species(
                             tmodel.derived[dname].subs(k, k_conc)
                         )
 
-                    # Fix rate rules
+                    # FIx rate rule
                     if (
                         rr := tmodel.reactions.get(f"d{k}")
                     ) is not None and rr.stoichiometry.get(k) is not None:
@@ -564,7 +578,7 @@ def _transform_species(
                     ) is not None:
                         tmodel.initial_assignments[k] = _mul_expr(init, comp)
 
-                    # Fix rate rules
+                    # FIx rate rule
                     if (rr := tmodel.derived.get(f"d{k}")) is not None:
                         tmodel.derived[f"d{k}"] = expr(
                             rr.subs(compartment, _div_expr(compartment, compartment))
