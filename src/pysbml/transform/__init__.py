@@ -402,11 +402,8 @@ def _handle_amount_boundary(
 
 def _handle_amount_has_substance_units(
     k: str,
-    compartment: str,
     init: sympy.Float,
-    pmodel: pdata.Model,
     tmodel: data.Model,
-    ctx: Ctx,
 ) -> None:
     """Handle amount with has_substance_units=True.
 
@@ -416,36 +413,67 @@ def _handle_amount_has_substance_units(
     If the value is false the unit of measurement is a concentration or density, else
     it is always interpreted as having an amount.
 
+    The only way that leads to legal expressions is when they don't contain a compartment
+    So we can just essentially ignore everything
 
     """
-    # Here SBML wants us to use the concentration as the ground thruth,
-    # so we have to replace it everywhere...
-    k_amount = f"{k}_amount"
-    tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
+    tmodel.variables[k] = data.Variable(value=init, unit=None)
 
-    tmodel.initial_assignments[k_amount] = _mul_expr(init, compartment)
-
-    if k in tmodel.derived:
-        tmodel.derived[k] = expr(tmodel.derived[k].subs(k, k_amount))
-    else:
-        tmodel.derived[k] = _div_expr(k_amount, compartment)
-
-    # Fix rate rule
-    if (rxn := tmodel.reactions.get(f"d{k}")) is not None:
-        rxn.stoichiometry[k_amount] = _mul_expr(rxn.stoichiometry.pop(k), compartment)
+    # Fix initial assignment
+    # Nothing to do here :)
 
     # Fix other assignment rules
-    for ar in ctx.ass_rules_by_var[k]:
-        if ar not in pmodel.variables:
-            tmodel.derived[ar] = expr(tmodel.derived[ar].subs(k, k_amount))
+    # Nothing to do here :)
+
+    # Fix rate rule
+    # Nothing to do here :)
+
+    # Fix reactions
+    # Nothing to do here :)
+
+
+def _handle_amount_boundary_has_substance_units(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """Handle amount with boundary=True and has_substance_units=True
+
+    A boundary condition means, per the spec (4.6.6), that the species is on the
+    boundary of the reaction system, and its amount is not determined by the reactions.
+
+    According to the spec (4.6.5) the `hasOnlySubstanceUnits` allows choosing the
+    meaning intended for a species' identifier when the identifier appears in
+    mathematical expressions or as the subject of SBML rules or assignments.
+    If the value is true the unit of measurement is always interpreted as an amount.
+
+    In test 1123 we have
+        S1: only substance units = False
+        S3: only substance units = True
+
+        rxn J0 = S3 / 10 with stoichiometry S1: -1.0
+
+    Since by our logic S1 will give itself the stoichiometry S1: -comp, we need to ignore
+    the hasOnlySubstanceUnits logic and insert the concentration into the reaction
+
+    FIXME: why does this happen with the boundary, but not without?
+    """
+    if k not in pmodel.rate_rules:
+        tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+    else:
+        tmodel.variables[k] = data.Variable(value=init, unit=None)
+
+    # We need the concentration of the boundary species in reactions
+    k_conc = f"{k}_conc"
+    tmodel.derived[k_conc] = _div_expr(k, compartment)
 
     # Fix reactions
     for rxn_name in ctx.rxns_by_var[k]:
-        LOGGER.debug("Fixing reaction %s", rxn_name)
         rxn = tmodel.reactions[rxn_name]
-
-        if (s := rxn.stoichiometry.pop(k, None)) is not None:
-            rxn.stoichiometry[k_amount] = _mul_expr(s, compartment)
+        rxn.expr = expr(rxn.expr.subs(k, k_conc))
 
 
 def _transform_species(
@@ -495,31 +523,21 @@ def _transform_species(
         if species.has_only_substance_units:
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | True | True", k)
-                tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-
-                if k not in pmodel.rate_rules:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-                else:
-                    tmodel.variables[k] = data.Variable(value=init, unit=None)
-
-                # We need the concentration of the boundary species in reactions
-                k_conc = f"{k}_conc"
-                tmodel.derived[k_conc] = _div_expr(k, compartment)
-
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
-
-            else:
-                LOGGER.debug("Species %s amount | True | False", k)
-                _handle_amount_has_substance_units(
+                _handle_amount_boundary_has_substance_units(
                     k=k,
                     compartment=compartment,
                     init=init,
                     pmodel=pmodel,
                     tmodel=tmodel,
                     ctx=ctx,
+                )
+
+            else:
+                LOGGER.debug("Species %s amount | True | False", k)
+                _handle_amount_has_substance_units(
+                    k=k,
+                    init=init,
+                    tmodel=tmodel,
                 )
 
         else:  # noqa: PLR5501
