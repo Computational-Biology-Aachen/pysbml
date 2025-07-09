@@ -492,11 +492,7 @@ def _handle_conc(
     There is a slight complication though if a compartment is changing. In that case it
     is easier to also create the amount.
     """
-    # This is no typo, see test 1117
-    if pmodel.variables[k].is_constant:
-        tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-
-    elif pmodel.compartments[compartment].is_constant:
+    if pmodel.compartments[compartment].is_constant:
         tmodel.variables[k] = data.Variable(value=init, unit=None)
 
         # Fix initial assignment rule
@@ -536,6 +532,99 @@ def _handle_conc(
             rxn = tmodel.reactions[rxn_name]
             if k in rxn.stoichiometry:
                 rxn.stoichiometry[k_amount] = rxn.stoichiometry.pop(k)
+
+
+def _handle_conc_boundary(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """ """
+    tmodel.variables[k_conc := f"{k}_conc"] = data.Variable(value=init, unit=None)
+    tmodel.derived[k] = _mul_expr(k_conc, compartment)
+
+    # Fix initial assignment rule
+    # Nothing to do here :)
+
+    # Fix assignment rules
+    for dname in ctx.ass_rules_by_var[k]:
+        tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k, k_conc))
+
+    # Fix rate rule
+    if (rr := tmodel.reactions.get(f"d{k}")) is not None and rr.stoichiometry.get(
+        k
+    ) is not None:
+        rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
+
+    # Fix reactions
+    # Nothing to do here, boundary species cannot have reactions :)
+
+
+def _handle_conc_has_substance_units(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    tmodel: data.Model,
+) -> None:
+    """Handle a species given in a concentration that is always intepreted as an amount.
+
+    Sigh. Ok, so let's just multiply the concentration by the compartment and call it a
+    day.
+
+    """
+    tmodel.variables[k] = data.Variable(value=init, unit=None)
+    if (ia := tmodel.initial_assignments.get(k)) is not None:
+        tmodel.initial_assignments[k] = _mul_expr(ia, compartment)
+    else:
+        tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+
+    # Fix initial assignment rule
+    # Nothing to do here :)
+
+    # Fix assignment rules
+    # Nothing to do here :)
+
+    # Fix rate rule
+    # Nothing to do here :)
+
+    # Fix reactions
+    # Nothing to do here :)
+
+
+def _handle_conc_boundary_has_substance_units(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """Handle a species given in a concentration that is always intepreted as an amount
+    as well as a boundary.
+
+    Sigh. Ok, so let's just multiply the concentration by the compartment and call it a
+    day.
+
+    """
+    tmodel.variables[k] = data.Variable(value=init, unit=None)
+    if (ia := tmodel.initial_assignments.get(k)) is not None:
+        tmodel.initial_assignments[k] = _mul_expr(ia, compartment)
+    else:
+        tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+
+    # Fix initial assignment rule
+    # Nothing to do here :)
+
+    # Fix assignment rules
+    for dname in ctx.ass_rules_by_var[k]:
+        tmodel.derived[dname] = _mul_expr(tmodel.derived[dname], compartment)
+
+    # Fix rate rule
+    # Nothing to do here :)
+
+    # Fix reactions
+    # Nothing to do here :)
 
 
 def _transform_species(
@@ -626,50 +715,42 @@ def _transform_species(
 
     # We have a concentration here
     elif species.initial_concentration is not None:
+        if variable_is_constant(k, pmodel):
+            tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+            return
+
         # If it IS a concentration but has only substance units
         # is set, we have to multiply it by the compartment initially
         if species.has_only_substance_units:
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | True | True", k)
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
+                _handle_conc_boundary_has_substance_units(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    tmodel=tmodel,
+                    ctx=ctx,
+                )
 
             else:
                 LOGGER.debug("Species %s: | conc | True | False", k)
-                tmodel.variables[k] = data.Variable(value=init, unit=None)
-                tmodel.initial_assignments[k] = _mul_expr(init, compartment)
-
-                for dname in ctx.ass_rules_by_var[k]:
-                    tmodel.derived[dname] = _mul_expr(
-                        tmodel.derived[dname], compartment
-                    )
+                _handle_conc_has_substance_units(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    tmodel=tmodel,
+                )
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: | conc | False | True", k)
-                # Here we interpret the given name of the species as an amount, but
-                # dynamically track the concentration
-
-                if species.is_constant:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-                else:
-                    tmodel.variables[k_conc := f"{k}_conc"] = data.Variable(
-                        value=init, unit=None
-                    )
-
-                    tmodel.derived[k] = _mul_expr(k_conc, compartment)
-
-                    # Fix derived
-                    for dname in ctx.ass_rules_by_var[k]:
-                        tmodel.derived[dname] = expr(
-                            tmodel.derived[dname].subs(k, k_conc)
-                        )
-
-                    # Fix rate rule
-                    if (
-                        rr := tmodel.reactions.get(f"d{k}")
-                    ) is not None and rr.stoichiometry.get(k) is not None:
-                        rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
+                _handle_conc_boundary(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    tmodel=tmodel,
+                    ctx=ctx,
+                )
 
             else:
                 LOGGER.debug("Species %s: | conc | False | False", k)
