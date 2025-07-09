@@ -115,13 +115,6 @@ def _mul_expr(
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
-def _add_expr(
-    x: str | float | data.Expr | sympy.Basic,
-    y: str | float | data.Expr | sympy.Basic,
-) -> sympy.Expr:
-    return _to_sympy_types(x) + _to_sympy_types(y)  # type: ignore
-
-
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
     if (comp := species.compartment) is None:
         return False
