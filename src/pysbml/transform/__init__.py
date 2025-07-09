@@ -650,6 +650,7 @@ def transform(doc: pdata.Document) -> data.Model:
         for arg in rxn.stoichiometry:
             ctx.rxns_by_var[arg].add(name)
     for name, rule in pmodel.assignment_rules.items():
+        ctx.ass_rules_by_var[name].add(name)
         for arg in rule.args:
             ctx.ass_rules_by_var[arg.name].add(name)
 
