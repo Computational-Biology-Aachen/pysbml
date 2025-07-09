@@ -150,7 +150,7 @@ class Reaction:
     body: Base
     stoichiometry: Mapping[str, float | list[tuple[float, str]]]
     args: list[Symbol]
-    local_pars: dict[str, Parameter]
+    local_pars: dict[str, Parameter] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return wl.pformat(self)

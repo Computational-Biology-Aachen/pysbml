@@ -1,0 +1,49 @@
+time: float = 0.0
+C: float = 1.00000000000000
+A: float = 50.0000000000000
+B: float = 1.00000000000000
+
+# Initial assignments
+dA_sr1 = -1
+dA_sr2 = 1
+dB_sr1 = -1
+dB_sr2 = 1
+J0 = 1
+A_sr1 = 2
+A_sr2 = 1
+B_sr1 = 2
+B_sr2 = 1
+y0 = [A, A_sr1, A_sr2, B, B_sr1, B_sr2]
+variable_names = ["A", "A_sr1", "A_sr2", "B", "B_sr1", "B_sr2"]
+
+
+def model(time: float, variables: tuple[float, ...]) -> tuple[float, ...]:
+    A, A_sr1, A_sr2, B, B_sr1, B_sr2 = variables
+    dA_sr1: float = -1
+    dA_sr2: float = 1
+    dB_sr1: float = -1
+    dB_sr2: float = 1
+    J0: float = 1
+    dA_sr1dt: float = dA_sr1
+    dA_sr2dt: float = dA_sr2
+    dB_sr1dt: float = dB_sr1
+    dB_sr2dt: float = dB_sr2
+    dAdt: float = J0 * (-A_sr1 - A_sr2)
+    dBdt: float = J0 * (B_sr1 + B_sr2)
+    return dAdt, dA_sr1dt, dA_sr2dt, dBdt, dB_sr1dt, dB_sr2dt
+
+
+def derived(time: float, variables: tuple[float, ...]) -> dict[str, float]:
+    A, A_sr1, A_sr2, B, B_sr1, B_sr2 = variables
+    dA_sr1: float = -1
+    dA_sr2: float = 1
+    dB_sr1: float = -1
+    dB_sr2: float = 1
+    J0: float = 1
+    return {
+        "dA_sr1": dA_sr1,
+        "dA_sr2": dA_sr2,
+        "dB_sr1": dB_sr1,
+        "dB_sr2": dB_sr2,
+        "J0": J0,
+    }

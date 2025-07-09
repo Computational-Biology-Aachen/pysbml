@@ -111,6 +111,12 @@ select = ["ALL"]
     "SLF",
     "PD901",   # "df" name
 ]
+"tests/assets/*" = [
+    "ARG001",
+    "INP001",
+    "N816",
+    "F841",
+]
 "tmp/*" = [
     "I001", # unsorted imports
     "S101", # assert

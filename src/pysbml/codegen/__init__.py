@@ -212,7 +212,10 @@ def codegen(model: tdata.Model) -> str:
         )
 
     returns = (f"d{i}dt" for i in variable_names)
-    source.append(f"{INDENT}return {', '.join(returns)}")
+    if len(variable_names) == 1:
+        source.append(f"{INDENT}return ({next(iter(returns))},)")
+    else:
+        source.append(f"{INDENT}return {', '.join(returns)}")
 
     # Additional variables
     source.append(

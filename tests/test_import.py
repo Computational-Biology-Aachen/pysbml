@@ -61,10 +61,10 @@ def get_files(
 def routine(test: int, test_dir: Path | None = None) -> None:
     test_dir = ASSET_PATH if test_dir is None else test_dir
     doc, settings, expected = get_files(test, test_dir=test_dir)
-    model_file = codegen(transform(doc))
+    model_code = codegen(transform(doc))
 
     module = types.ModuleType(f"model{test}")
-    exec(model_file, module.__dict__)  # noqa: S102
+    exec(model_code, module.__dict__)  # noqa: S102
     model: Callable[[float, Iterable[float]], Iterable[float]] = module.model
     derived: Callable[[float, Iterable[float]], Iterable[float]] = module.derived
     y0: Iterable[float] = module.y0
@@ -100,8 +100,13 @@ def routine(test: int, test_dir: Path | None = None) -> None:
         expected.loc[:, columns],
         rtol=1e-2,
         atol=1e-4,
-        err_msg=f"Failed test {test}, model:\n\n{model_file}\n\n",
+        err_msg=f"Failed test {test}, model:\n\n{model_code}\n\n",
     )
+
+    # Turn this on to write out the generated models as reference
+    # if you change the codegen
+    # with (test_dir / f"{test:05d}" / "model.py").open("w+") as fp:
+    #     fp.write(model_code)
 
 
 def test_00001() -> None:

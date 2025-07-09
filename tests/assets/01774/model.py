@@ -1,0 +1,46 @@
+time: float = 0.0
+C: float = 2.00000000000000
+J1_S1_stoich: float = 0.0100000000000000
+S1_stoich: float = 2.00000000000000
+
+# Initial assignments
+J0 = 0.0100000000000000
+J1 = J1_S1_stoich
+J2 = (1 / 20) * S1_stoich
+S1_amount = 2.0 * C
+S2_amount = 3.0 * C
+S3_amount = 4.0 * C
+S1 = S1_amount / C
+S2 = S2_amount / C
+S3 = S3_amount / C
+y0 = [S1_amount, S2_amount, S3_amount]
+variable_names = ["S1_amount", "S2_amount", "S3_amount"]
+
+
+def model(time: float, variables: tuple[float, ...]) -> tuple[float, ...]:
+    S1_amount, S2_amount, S3_amount = variables
+    J0: float = 0.0100000000000000
+    J1: float = J1_S1_stoich
+    J2: float = (1 / 20) * S1_stoich
+    dS1_amountdt: float = -C * J0 * S1_stoich
+    dS2_amountdt: float = C * J1
+    dS3_amountdt: float = -C * J2
+    return dS1_amountdt, dS2_amountdt, dS3_amountdt
+
+
+def derived(time: float, variables: tuple[float, ...]) -> dict[str, float]:
+    S1_amount, S2_amount, S3_amount = variables
+    S1: float = S1_amount / C
+    S2: float = S2_amount / C
+    S3: float = S3_amount / C
+    J0: float = 0.0100000000000000
+    J1: float = J1_S1_stoich
+    J2: float = (1 / 20) * S1_stoich
+    return {
+        "S1": S1,
+        "S2": S2,
+        "S3": S3,
+        "J0": J0,
+        "J1": J1,
+        "J2": J2,
+    }
