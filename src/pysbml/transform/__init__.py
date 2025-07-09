@@ -546,17 +546,22 @@ def _handle_conc_boundary(
     tmodel.derived[k] = _mul_expr(k_conc, compartment)
 
     # Fix initial assignment rule
-    # Nothing to do here :)
+    if (ia := tmodel.initial_assignments.pop(k, None)) is not None:
+        tmodel.initial_assignments[k_conc] = ia
 
     # Fix assignment rules
     for dname in ctx.ass_rules_by_var[k]:
-        tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k, k_conc))
+        if dname == k:
+            tmodel.derived[k_conc] = expr(tmodel.derived.pop(dname).subs(k, k_conc))
+        else:
+            tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k, k_conc))
 
     # Fix rate rule
-    if (rr := tmodel.reactions.get(f"d{k}")) is not None and rr.stoichiometry.get(
-        k
-    ) is not None:
-        rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
+    if (rr := tmodel.reactions.pop(f"d{k}", None)) is not None:
+        tmodel.reactions[f"d{k_conc}"] = rr
+
+        if rr.stoichiometry.get(k) is not None:
+            rr.stoichiometry[k_conc] = rr.stoichiometry.pop(k)
 
     # Fix reactions
     # Nothing to do here, boundary species cannot have reactions :)
