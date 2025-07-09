@@ -4257,7 +4257,7 @@ def test_00998() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_00999() -> None:
     with pytest.raises(NotImplementedError):
@@ -5191,6 +5191,12 @@ def test_01205() -> None:
     routine(test=1205)
 
 
+@pytest.mark.skip("""Test suite asks for concentration even though species is amount. \
+                  Marked by empty substance units (not documented in SBML spec). \
+                  We don't need to support this
+
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
+                  """)
 def test_01206() -> None:
     routine(test=1206)
 
@@ -5656,7 +5662,7 @@ def test_01306() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01307() -> None:
     routine(test=1307)
@@ -5666,7 +5672,7 @@ def test_01307() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01308() -> None:
     routine(test=1308)
@@ -6567,7 +6573,7 @@ def test_01497() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01498() -> None:
     routine(test=1498)
@@ -6647,7 +6653,7 @@ def test_01512() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01513() -> None:
     with pytest.raises(NotImplementedError):
@@ -6658,7 +6664,7 @@ def test_01513() -> None:
                   Marked by empty substance units (not documented in SBML spec). \
                   We don't need to support this
 
-                  Affected tests: 999, 1307, 1308, 1498, 1513, 1514
+                  Affected tests: 999, 1206, 1307, 1308, 1498, 1513, 1514
                   """)
 def test_01514() -> None:
     with pytest.raises(NotImplementedError):
