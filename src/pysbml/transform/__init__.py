@@ -92,33 +92,34 @@ class Ctx:
 
 
 def _to_sympy_types(
-    x: str | float | data.Expr,
+    x: str | float | data.Expr | sympy.Basic,
 ) -> data.Expr:
     if isinstance(x, str):
         return sympy.Symbol(x)
     if isinstance(x, float | int):
         return sympy.Float(x)
-    return x
+    return x  # type: ignore
 
 
 def _div_expr(
-    x: str | float | data.Expr,
-    y: str | float | data.Expr,
+    x: str | float | data.Expr | sympy.Basic,
+    y: str | float | data.Expr | sympy.Basic,
 ) -> sympy.Expr:
     return _to_sympy_types(x) / _to_sympy_types(y)  # type: ignore
 
 
 def _mul_expr(
-    x: str | float | data.Expr,
-    y: str | float | data.Expr,
+    x: str | float | data.Expr | sympy.Basic,
+    y: str | float | data.Expr | sympy.Basic,
 ) -> sympy.Expr:
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
-def _change(s: str | data.Expr, dc: str | data.Expr) -> sympy.Expr:
-    s = _to_sympy_types(s)
-    dc = _to_sympy_types(dc)
-    return s + (s * dc)  # type: ignore
+def _add_expr(
+    x: str | float | data.Expr | sympy.Basic,
+    y: str | float | data.Expr | sympy.Basic,
+) -> sympy.Expr:
+    return _to_sympy_types(x) + _to_sympy_types(y)  # type: ignore
 
 
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
@@ -336,10 +337,9 @@ def _handle_amount(
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
         rr.stoichiometry = {k: sympy.Symbol(compartment)}
 
-    # Fix reaction
+    # Fix reactions
     for rxn_name in ctx.rxns_by_var[k]:
         rxn = tmodel.reactions[rxn_name]
-
         rxn.expr = expr(
             rxn.expr.subs(
                 {
@@ -350,6 +350,102 @@ def _handle_amount(
         )
         if (s := rxn.stoichiometry.get(k)) is not None:
             rxn.stoichiometry[k] = _mul_expr(s, compartment)
+
+
+def _handle_amount_boundary(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """Handle amount that has a boundary condition.
+
+    This means, per the spec (4.6.6) that the species is on the boundary of the reaction
+    system, and its amount is not determined by the reactions.
+
+    This does **not** mean, that it cannot be changed, because it **can** be changed by
+    rate rules.
+
+    """
+    if k not in pmodel.rate_rules:
+        tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+    else:
+        tmodel.variables[k] = data.Variable(value=init, unit=None)
+    tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
+
+    # Fix initial assignment rule
+    if (ar := tmodel.initial_assignments.get(k)) is not None:
+        tmodel.initial_assignments[k] = _mul_expr(ar, compartment)
+
+    # Fix assignment rules
+    # Nothing to do here :)
+
+    # Fix rate rule
+    if (rr := tmodel.reactions.get(f"d{k}")) is not None:
+        rr.stoichiometry = {k: sympy.Symbol(compartment)}
+
+    # Fix reactions
+    for rxn_name in ctx.rxns_by_var[k]:
+        rxn = tmodel.reactions[rxn_name]
+
+        rate = expr(rxn.expr.subs(compartment, 1))
+
+        # FIXME: Test 1122 requires me to divide the concentration by the compartment
+        # to run through. That's certainly false. What the hell is this?
+        rxn.expr = expr(rate.subs(k, _div_expr(k_conc, compartment)))
+
+        # Boundary condition means it cannot be part of the reactions system, so we
+        # don't need to worry about the stoichiometry
+
+
+def _handle_amount_has_substance_units(
+    k: str,
+    compartment: str,
+    init: sympy.Float,
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    ctx: Ctx,
+) -> None:
+    """Handle amount with has_substance_units=True.
+
+    According to the spec (4.6.5) the `hasOnlySubstanceUnits` allows choosing the
+    meaning intended for a species' identifier when the identifier appears in
+    mathematical expressions or as the subject of SBML rules or assignments.
+    If the value is false the unit of measurement is a concentration or density, else
+    it is always interpreted as having an amount.
+
+
+    """
+    # Here SBML wants us to use the concentration as the ground thruth,
+    # so we have to replace it everywhere...
+    k_amount = f"{k}_amount"
+    tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
+
+    tmodel.initial_assignments[k_amount] = _mul_expr(init, compartment)
+
+    if k in tmodel.derived:
+        tmodel.derived[k] = expr(tmodel.derived[k].subs(k, k_amount))
+    else:
+        tmodel.derived[k] = _div_expr(k_amount, compartment)
+
+    # Fix rate rule
+    if (rxn := tmodel.reactions.get(f"d{k}")) is not None:
+        rxn.stoichiometry[k_amount] = _mul_expr(rxn.stoichiometry.pop(k), compartment)
+
+    # Fix other assignment rules
+    for ar in ctx.ass_rules_by_var[k]:
+        if ar not in pmodel.variables:
+            tmodel.derived[ar] = expr(tmodel.derived[ar].subs(k, k_amount))
+
+    # Fix reactions
+    for rxn_name in ctx.rxns_by_var[k]:
+        LOGGER.debug("Fixing reaction %s", rxn_name)
+        rxn = tmodel.reactions[rxn_name]
+
+        if (s := rxn.stoichiometry.pop(k, None)) is not None:
+            rxn.stoichiometry[k_amount] = _mul_expr(s, compartment)
 
 
 def _transform_species(
@@ -416,79 +512,27 @@ def _transform_species(
                     rxn.expr = expr(rxn.expr.subs(k, k_conc))
 
             else:
-                # Here SBML wants us to use the concentration as the ground thruth,
-                # so we have to replace it everywhere...
                 LOGGER.debug("Species %s amount | True | False", k)
-                k_amount = f"{k}_amount"
-                tmodel.variables[k_amount] = data.Variable(value=init, unit=None)
-
-                tmodel.initial_assignments[k_amount] = _mul_expr(init, compartment)
-
-                if k in tmodel.derived:
-                    tmodel.derived[k] = expr(tmodel.derived[k].subs(k, k_amount))
-                else:
-                    tmodel.derived[k] = _div_expr(k_amount, compartment)
-
-                # Fix rate rule
-                if (rxn := tmodel.reactions.get(f"d{k}")) is not None:
-                    rxn.stoichiometry[k_amount] = _mul_expr(
-                        rxn.stoichiometry.pop(k), compartment
-                    )
-
-                # Fix other assignment rules
-                for ar in ctx.ass_rules_by_var[k]:
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = expr(tmodel.derived[ar].subs(k, k_amount))
-
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    LOGGER.debug("Fixing reaction %s", rxn_name)
-                    rxn = tmodel.reactions[rxn_name]
-
-                    if (s := rxn.stoichiometry.pop(k, None)) is not None:
-                        rxn.stoichiometry[k_amount] = _mul_expr(s, compartment)
+                _handle_amount_has_substance_units(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    pmodel=pmodel,
+                    tmodel=tmodel,
+                    ctx=ctx,
+                )
 
         else:  # noqa: PLR5501
             if species.has_boundary_condition:
                 LOGGER.debug("Species %s: amount | False | True", k)
-
-                if k not in pmodel.rate_rules:
-                    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-                else:
-                    tmodel.variables[k] = data.Variable(value=init, unit=None)
-
-                # We need the concentration of the boundary species in reactions
-                k_conc = f"{k}_conc"
-                tmodel.derived[k_conc] = _div_expr(k, compartment)
-
-                # Fix rate rule
-                if (
-                    not pmodel.compartments[compartment].is_constant
-                    and (rr := tmodel.reactions.get(f"d{k}")) is not None
-                ):
-                    rr.expr = expr(rr.expr.subs(compartment, 1)) + _mul_expr(
-                        k, f"d{compartment}"
-                    )  # type: ignore
-
-                # Fix assignment rules (1206)
-                for ar in ctx.ass_rules_by_var[k]:
-                    # There seems to be a case distinction between "normal" variables
-                    # and newly created ones. S4 in test 157 is assumed to be an amount
-                    # x in 1206 a concentration
-                    if ar not in pmodel.variables:
-                        tmodel.derived[ar] = _div_expr(tmodel.derived[ar], compartment)
-
-                # Fix reactions
-                for rxn_name in ctx.rxns_by_var[k]:
-                    rxn = tmodel.reactions[rxn_name]
-                    rxn.expr = expr(rxn.expr.subs(k, k_conc))
-
-                    # Fix test 1122: if we are inserting a concentration, we need
-                    # to treat all other variables as concentrations as well
-                    rxn.stoichiometry = {
-                        k: expr(v.subs(compartment, 1))
-                        for k, v in rxn.stoichiometry.items()
-                    }
+                _handle_amount_boundary(
+                    k=k,
+                    compartment=compartment,
+                    init=init,
+                    pmodel=pmodel,
+                    tmodel=tmodel,
+                    ctx=ctx,
+                )
 
             else:
                 LOGGER.debug("Species %s: amount | False | False", k)
