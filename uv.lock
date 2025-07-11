@@ -1306,9 +1306,7 @@ name = "pysbml"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "pandas" },
     { name = "python-libsbml" },
-    { name = "scipy" },
     { name = "sympy" },
 ]
 
@@ -1321,10 +1319,12 @@ dev = [
     { name = "mkdocs" },
     { name = "mkdocs-jupyter" },
     { name = "mkdocs-material" },
+    { name = "pandas" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "scipy" },
     { name = "ssort" },
     { name = "toml" },
     { name = "toml-sort" },
@@ -1333,9 +1333,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pandas", specifier = ">=2.3.0" },
     { name = "python-libsbml", specifier = ">=5.20.4" },
-    { name = "scipy", specifier = ">=1.16.0" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
 
@@ -1348,10 +1346,12 @@ dev = [
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-jupyter", specifier = ">=0.25.1" },
     { name = "mkdocs-material", specifier = ">=9.6.14" },
+    { name = "pandas", specifier = ">=2.3.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "ruff", specifier = ">=0.12.1" },
+    { name = "scipy", specifier = ">=1.16.0" },
     { name = "ssort", specifier = ">=0.14.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "toml-sort", specifier = ">=0.24.2" },

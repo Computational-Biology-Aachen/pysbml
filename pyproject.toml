@@ -19,14 +19,14 @@ dev = [
     "toml>=0.10.2",
     "toml-sort>=0.24.2",
     "wadler-lindig>=0.1.7",
+    "pandas>=2.3.0",
+    "scipy>=1.16.0",
 ]
 
 [project]
 authors = [{ name = "Marvin van Aalst", email = "marvin.vanaalst@gmail.com" }]
 dependencies = [
-    "pandas>=2.3.0",
     "python-libsbml>=5.20.4",
-    "scipy>=1.16.0",
     "sympy>=1.14.0",
 ]
 description = "Add your description here"
