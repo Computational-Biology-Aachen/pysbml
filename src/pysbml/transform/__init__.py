@@ -469,6 +469,15 @@ def _handle_amount_boundary_has_substance_units(
         rxn.expr = expr(rxn.expr.subs(k, k_conc))
 
 
+def _handle_constant_variable(
+    k: str, init: sympy.Float, tmodel: data.Model, ctx: Ctx
+) -> None:
+    tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+
+    for name in ctx.rxns_by_var[k]:
+        tmodel.reactions[name].stoichiometry.pop(k, None)
+
+
 def _handle_conc(
     k: str,
     compartment: str,
@@ -650,11 +659,10 @@ def _transform_species(
     # If not, our life is significantly easier, because there really are just two choices
     if not compartment_is_valid(pmodel, species=species):
         if variable_is_constant(k, pmodel):
-            tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-            return
+            return _handle_constant_variable(k=k, init=init, tmodel=tmodel, ctx=ctx)
 
         tmodel.variables[k] = data.Variable(value=init, unit=None)
-        return
+        return None
 
     # Compartment is valid as in exists and is non-zero / nan
     compartment = cast(str, species.compartment)
@@ -714,8 +722,7 @@ def _transform_species(
     # We have a concentration here
     elif species.initial_concentration is not None:
         if variable_is_constant(k, pmodel):
-            tmodel.parameters[k] = data.Parameter(value=init, unit=None)
-            return
+            return _handle_constant_variable(k=k, init=init, tmodel=tmodel, ctx=ctx)
 
         # If it IS a concentration but has only substance units
         # is set, we have to multiply it by the compartment initially
@@ -791,6 +798,8 @@ def _transform_species(
             # test 1513 assumes concentration??
             pmodel.variables[k].initial_amount = 0.0
             _transform_species(k, species, pmodel, tmodel, ctx)
+
+    return None
 
 
 def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
