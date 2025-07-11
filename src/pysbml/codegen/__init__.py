@@ -103,13 +103,6 @@ def _to_sympy_types(
     return x
 
 
-def _div_expr(
-    x: str | float | tdata.Expr,
-    y: str | float | tdata.Expr,
-) -> sympy.Expr:
-    return _to_sympy_types(x) / _to_sympy_types(y)  # type: ignore
-
-
 def _mul_expr(
     x: str | float | tdata.Expr,
     y: str | float | tdata.Expr,
