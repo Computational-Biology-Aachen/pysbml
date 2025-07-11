@@ -3,7 +3,7 @@
 [![pypi](https://img.shields.io/pypi/v/pysbml.svg)](https://pypi.python.org/pypi/pysbml)
 [![docs][docs-badge]][docs]
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
-![Coverage](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgist.github.com%2Fmarvinvanaalst%2F98ab3ce1db511de42f9871e91d85e4cd%2Fraw%2Fcoverage.json&query=%24.message&label=Coverage&color=%24.color&suffix=%20%25)
+![Coverage](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgist.githubusercontent.com%2Fmarvinvanaalst%2Fb518d017c83b8938be27036ee04df0e3%2Fraw%2F77de2288523103b449f89df15b627431bbfdf403%2Fcoverage.json&query=%24.message&label=Coverage&color=%24.color&suffix=%20%25)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![security: bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
 [![PyPI Downloads](https://static.pepy.tech/badge/pysbml)](https://pepy.tech/projects/pysbml)
