@@ -34,7 +34,7 @@ jobs:
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: b518d017c83b8938be27036ee04df0e3
-          filename: pysbml-coverage.json
+          filename: coverage.json
           label: Coverage
           message: ${{ env.COVERAGE }}
           valColorRange: ${{ env.COVERAGE }}
