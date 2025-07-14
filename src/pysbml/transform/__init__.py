@@ -363,7 +363,7 @@ def _handle_amount_boundary(
 
     """
     if k not in pmodel.rate_rules:
-        tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+        _handle_constant_variable(k, init=init, tmodel=tmodel, ctx=ctx)
     else:
         tmodel.variables[k] = data.Variable(value=init, unit=None)
     tmodel.derived[k_conc := f"{k}_conc"] = _div_expr(k, compartment)
@@ -455,7 +455,7 @@ def _handle_amount_boundary_has_substance_units(
     FIXME: why does this happen with the boundary, but not without?
     """
     if k not in pmodel.rate_rules:
-        tmodel.parameters[k] = data.Parameter(value=init, unit=None)
+        _handle_constant_variable(k, init=init, tmodel=tmodel, ctx=ctx)
     else:
         tmodel.variables[k] = data.Variable(value=init, unit=None)
 
@@ -721,6 +721,7 @@ def _transform_species(
 
     # We have a concentration here
     elif species.initial_concentration is not None:
+        # We can always do this safely here, as we don't need any further transformation
         if variable_is_constant(k, pmodel):
             return _handle_constant_variable(k=k, init=init, tmodel=tmodel, ctx=ctx)
 
