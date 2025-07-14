@@ -220,6 +220,7 @@ def codegen(model: tdata.Model) -> str:
             if len(variable_names) > 1
             else f"{INDENT}{variable_names[0]}, = variables"
         )
+
     source.extend(
         f"{INDENT}{name}: float = {codegen_expr(exprs[name])}" for name in order
     )
@@ -227,6 +228,7 @@ def codegen(model: tdata.Model) -> str:
     source.extend(
         [
             f"{INDENT}return {{",
+            *(f"{INDENT * 2}{name!r}: {name}," for name in model.parameters),
             *(f"{INDENT * 2}{name!r}: {name}," for name in order),
             f"{INDENT}}}",
         ]
