@@ -40,8 +40,8 @@ __all__ = [
     "parse_parameters",
     "parse_reactions",
     "parse_rules",
+    "parse_species",
     "parse_units",
-    "parse_variables",
 ]
 
 UNIT_CONVERSION = get_unit_conversion()
@@ -174,7 +174,7 @@ def parse_parameters(model: Model, lib_model: libsbml.Model) -> None:
         )
 
 
-def parse_variables(model: Model, lib_model: libsbml.Model) -> None:
+def parse_species(model: Model, lib_model: libsbml.Model) -> None:
     for compound in lib_model.getListOfSpecies():
         compound_id = name_to_py(compound.getId())
         conversion_factor: str | None = (
@@ -191,7 +191,7 @@ def parse_variables(model: Model, lib_model: libsbml.Model) -> None:
             model.boundary_species.add(compound_id)
 
         model.variables[compound_id] = Species(
-            compartment=compound.getCompartment(),
+            compartment=comp if (comp := compound.getCompartment()) else None,
             conversion_factor=conversion_factor,
             initial_amount=initial_amount,
             initial_concentration=initial_concentration,
@@ -423,7 +423,7 @@ def parse(
     parse_events(model=model, lib_model=lib_model)
     parse_compartments(model=model, lib_model=lib_model)
     parse_parameters(model=model, lib_model=lib_model)
-    parse_variables(model=model, lib_model=lib_model)
+    parse_species(model=model, lib_model=lib_model)
     parse_functions(model=model, lib_model=lib_model)
     parse_initial_assignments(model=model, lib_model=lib_model)
     parse_rules(model=model, sbml_model=lib_model)
