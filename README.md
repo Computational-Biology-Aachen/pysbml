@@ -79,3 +79,13 @@ We recommend using `uv`
 
 - Install `uv` as described in [the docs](https://docs.astral.sh/uv/getting-started/installation/).
 - Run `uv sync --all-extras --all-groups` to install dependencies locally
+
+## Tool family 🏠
+
+`pySBML` is part of a larger family of tools that are designed with a similar set of abstractions. Check them out!
+
+- [MxlPy](https://github.com/Computational-Biology-Aachen/MxlPy) is a Python package for mechanistic learning (Mxl)
+- [MxlBricks](https://github.com/Computational-Biology-Aachen/mxl-bricks) is built on top of `MxlPy` to build mechanistic models composed of pre-defined reactions (bricks)
+- [MxlModels](https://github.com/Computational-Biology-Aachen/mxl-models) supplies flat, single-file versions of MxlBricks models for easy inspection
+- [MxlWeb](https://github.com/Computational-Biology-Aachen/mxl-web) brings simulation of mechanistic models to the browser!
+- [Parameteriser](https://gitlab.com/marvin.vanaalst/parameteriser) looks up kinetic parameters from BRENDA and other databases
