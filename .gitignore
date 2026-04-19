@@ -14,3 +14,8 @@ tmp/
 temp/
 *tmp.ipynb
 *temp.ipynb
+
+# AI config files
+.github/copilot-instructions.md
+.claude
+CLAUDE.md

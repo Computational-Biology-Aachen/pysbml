@@ -4,7 +4,6 @@ requires = ["hatchling"]
 
 [dependency-groups]
 dev = [
-    "bandit>=1.8.5",
     "coverage>=7.9.1",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.3",
@@ -14,7 +13,7 @@ dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
-    "ruff>=0.12.1",
+    "ruff>=0.15.11",
     "ssort>=0.14.0",
     "toml>=0.10.2",
     "toml-sort>=0.24.2",
