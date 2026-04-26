@@ -1,3 +1,5 @@
+"""Data classes for the transformed (sympy-based) SBML model representation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -24,33 +26,44 @@ type Stoichiometry = dict[str, Expr]
 
 @dataclass(kw_only=True, slots=True)
 class Parameter:
+    """A constant model parameter with a sympy float value and optional unit."""
+
     value: sympy.Float
     unit: Quantity | None
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Variable:
+    """A dynamic model variable (species) with a sympy float initial value and optional unit."""
+
     value: sympy.Float
     unit: Quantity | None
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Reaction:
+    """A transformed reaction with a sympy kinetic law expression and stoichiometry map."""
+
     expr: sympy.Expr
     stoichiometry: Stoichiometry
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Model:
+    """The complete transformed SBML model with sympy expressions for all components."""
+
     name: str
     units: dict[str, Quantity] = field(default_factory=dict)
     functions: dict[str, Expr] = field(default_factory=dict)
@@ -61,6 +74,7 @@ class Model:
     initial_assignments: dict[str, Expr] = field(default_factory=dict)
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
     def _repr_markdown_(self) -> str:

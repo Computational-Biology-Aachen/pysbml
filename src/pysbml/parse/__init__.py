@@ -1,3 +1,5 @@
+"""SBML document parsing: dispatch to version-specific parsers."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,7 +24,6 @@ def parse(
     version: int,  # Literal[1, 2, 3, 4, 5],
 ) -> Model:
     """Parse sbml model."""
-
     # FIXME: actually use different parsers here
     match version:
         case 1:
@@ -37,6 +38,7 @@ def parse(
 
 
 def load_document(file: str | Path) -> data.Document:
+    """Read an SBML file and return a parsed Document."""
     if not Path(file).exists():
         msg = "Model file does not exist"
         raise OSError(msg)

@@ -1,3 +1,5 @@
+"""Utility functions for mapping libsbml unit and AST type constants."""
+
 from __future__ import annotations
 
 import libsbml
@@ -46,10 +48,12 @@ _unit_conversion = {
 
 
 def get_unit_conversion() -> dict[str, str]:
+    """Return a mapping from libsbml UNIT_KIND int constants to canonical unit name strings."""
     return {getattr(libsbml, k): v for k, v in _unit_conversion.items()}
 
 
 def get_ast_types() -> dict[str, str]:
+    """Return a mapping from libsbml AST type int constants to their AST_ name strings."""
     return dict(
         sorted(
             {
@@ -60,6 +64,7 @@ def get_ast_types() -> dict[str, str]:
 
 
 def get_operator_mappings() -> dict[str, str]:
+    """Return a mapping from AST_ operator names to their Python operator symbols."""
     return {
         "AST_TIMES": "*",
         "AST_PLUS": "+",

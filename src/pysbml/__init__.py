@@ -1,4 +1,4 @@
-"""SBML reader for ODE models"""
+"""SBML reader for ODE models."""
 
 from __future__ import annotations
 
@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 
 
 def load_model(file: str | Path) -> parse.data.Model:
+    """Load and parse an SBML file, returning the raw parsed model."""
     return load_document(file).model
 
 
 def load_and_transform_model(file: str | Path) -> transform.data.Model:
+    """Load, parse and transform an SBML file into a simplified model."""
     return transform.transform(load_document(file))

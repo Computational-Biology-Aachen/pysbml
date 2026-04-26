@@ -1,3 +1,5 @@
+"""Code generation from transformed SBML models to Python ODE functions."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,7 +40,6 @@ def _sort_dependencies(
         SortError: If circular dependencies are detected
 
     """
-
     order = []
     # FIXME: what is the worst case here?
     max_iterations = len(elements) ** 2
@@ -80,16 +81,19 @@ def _sort_dependencies(
 
 
 def free_symbols(expr: sympy.Expr) -> list[str]:
+    """Return sorted list of free symbol names in a sympy expression."""
     return [i.name for i in expr.free_symbols if isinstance(i, sympy.Symbol)]
 
 
 def codegen_expr(expr: sympy.Expr) -> str:
+    """Generate Python source for a sympy expression."""
     return cast(str, pycode(expr, fully_qualified_modules=True)).replace(
         "math.factorial", "scipy.special.factorial"
     )
 
 
 def codegen_value(val: sympy.Float) -> str:
+    """Generate Python source for a sympy float literal."""
     return cast(str, pycode(val, fully_qualified_modules=True))
 
 
@@ -111,6 +115,7 @@ def _mul_expr(
 
 
 def codegen(model: tdata.Model) -> str:
+    """Generate a Python module string for a transformed SBML model."""
     # Do calculations
     variable_names = sorted(model.variables)
 

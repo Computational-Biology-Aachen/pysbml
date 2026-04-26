@@ -82,11 +82,14 @@ LOGGER = logging.getLogger(__name__)
 
 
 def expr(x: data.Expr | sympy.Basic) -> sympy.Expr:
+    """Cast a sympy expression to sympy.Expr for type narrowing."""
     return cast(sympy.Expr, x)
 
 
 @dataclass
 class Ctx:
+    """Context tracking which reactions and assignment rules reference each variable."""
+
     rxns_by_var: defaultdict[str, set[str]]
     ass_rules_by_var: defaultdict[str, set[str]]
 
@@ -116,6 +119,7 @@ def _mul_expr(
 
 
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
+    """Return True if the species' compartment exists and has a non-zero, non-nan size."""
     if (comp := species.compartment) is None:
         return False
     return bool(
@@ -129,6 +133,7 @@ def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
 
 
 def variable_is_constant(name: str, pmodel: pdata.Model) -> bool:
+    """Return True if the named species should be treated as a constant parameter."""
     var = pmodel.variables[name]
     if var.is_constant:
         return True
@@ -138,12 +143,12 @@ def variable_is_constant(name: str, pmodel: pdata.Model) -> bool:
 
 
 def free_symbols(expr: sympy.Expr) -> list[str]:
+    """Return list of free symbol names in a sympy expression."""
     return [i.name for i in expr.free_symbols if isinstance(i, sympy.Symbol)]
 
 
 def convert_units(pmodel: pdata.Model, tmodel: data.Model) -> None:
     """Replace SBML units with sympy ones."""
-
     for name, unit in pmodel.atomic_units.items():
         if (mapped := CONVERSION.get(name)) is None:
             LOGGER.warning("Could not map unit %s", name)
@@ -163,6 +168,7 @@ def convert_constraints(
     pmodel: pdata.Model,
     tmodel: data.Model,  # noqa: ARG001
 ) -> None:
+    """Raise NotImplementedError — constraint handling is not yet supported."""
     for _ in pmodel.constraints.items():
         msg = "Constraint handling not yet supported"
         raise NotImplementedError(msg)
@@ -172,17 +178,20 @@ def convert_events(
     pmodel: pdata.Model,
     tmodel: data.Model,  # noqa: ARG001
 ) -> None:
+    """Raise NotImplementedError — event handling is not yet supported."""
     for _ in pmodel.events.items():
         msg = "Event handling not yet supported"
         raise NotImplementedError(msg)
 
 
 def convert_functions(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Convert SBML function definitions to sympy expressions in the transformed model."""
     for name, fn in pmodel.functions.items():
         tmodel.functions[name] = convert_mathml(fn.body, fns=tmodel.functions)
 
 
 def convert_parameters(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Split SBML parameters into constant parameters and dynamic variables."""
     for k, par in pmodel.parameters.items():
         if par.is_constant:
             tmodel.parameters[k] = data.Parameter(
@@ -193,6 +202,7 @@ def convert_parameters(pmodel: pdata.Model, tmodel: data.Model) -> None:
 
 
 def convert_compartments(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Split SBML compartments into constant parameters and dynamic variables."""
     for k, par in pmodel.compartments.items():
         if par.is_constant:
             tmodel.parameters[k] = data.Parameter(
@@ -205,6 +215,7 @@ def convert_compartments(pmodel: pdata.Model, tmodel: data.Model) -> None:
 def convert_rules_and_initial_assignments(
     pmodel: pdata.Model, tmodel: data.Model
 ) -> None:
+    """Convert SBML rules and initial assignments to reactions and derived expressions."""
     for name, rr in pmodel.rate_rules.items():
         # Rate rules can create variables by SBML spec. Not cool
         if name not in tmodel.variables:
@@ -227,11 +238,13 @@ def convert_rules_and_initial_assignments(
 
 
 def _convert_stoich_tuple(x: tuple[float, str]) -> sympy.Expr:
+    """Convert a (factor, species_ref) stoichiometry tuple to a sympy expression."""
     factor, name = x
     return sympy.Mul(sympy.Float(factor), sympy.Symbol(name))
 
 
 def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Convert SBML reactions to sympy kinetic-law expressions with resolved stoichiometry."""
     for name, rxn in pmodel.reactions.items():
         fn = convert_mathml(rxn.body, fns=tmodel.functions)
         stoichiometry: data.Stoichiometry = {}
@@ -260,6 +273,7 @@ def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
 
 
 def remove_duplicate_entries(tmodel: data.Model) -> None:
+    """Remove parameters and variables that are superseded by derived expressions."""
     for name in tmodel.derived:
         if name in tmodel.parameters:
             del tmodel.parameters[name]
@@ -274,7 +288,7 @@ def _handle_amount(
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
-    """This is the default case for most tests. We are given an species in an amount.
+    """Handle a species given in amount units (default case).
 
     SBML reactions are written in a way that contains the compartment, e.g.
 
@@ -433,7 +447,7 @@ def _handle_amount_boundary_has_substance_units(
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
-    """Handle amount with boundary=True and has_substance_units=True
+    """Handle amount with boundary=True and has_substance_units=True.
 
     A boundary condition means, per the spec (4.6.6), that the species is on the
     boundary of the reaction system, and its amount is not determined by the reactions.
@@ -543,7 +557,7 @@ def _handle_conc_boundary(
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
-    """ """
+    """Handle species given as a concentration with a boundary condition."""
     tmodel.variables[k_conc := f"{k}_conc"] = data.Variable(value=init, unit=None)
     tmodel.derived[k] = _mul_expr(k_conc, compartment)
 
@@ -607,12 +621,9 @@ def _handle_conc_boundary_has_substance_units(
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
-    """Handle a species given in a concentration that is always intepreted as an amount
-    as well as a boundary.
+    """Handle a species in concentration units with both boundary=True and has_substance_units=True.
 
-    Sigh. Ok, so let's just multiply the concentration by the compartment and call it a
-    day.
-
+    Multiplies the concentration by the compartment to convert to amount.
     """
     tmodel.variables[k] = data.Variable(value=init, unit=None)
     if (ia := tmodel.initial_assignments.get(k)) is not None:
@@ -641,8 +652,10 @@ def _transform_species(
     tmodel: data.Model,
     ctx: Ctx,
 ) -> None:
-    """Separate species into parameters and variables and substitute correct version
-    in reactions, rules and initial assignments if necessary.
+    """Separate a species into parameter or variable and fix all reaction/rule references.
+
+    Substitutes the correct concentration or amount expression wherever the species
+    identifier appears in reactions, rules, and initial assignments.
     """
     if species.conversion_factor is not None:
         raise NotImplementedError
@@ -804,12 +817,14 @@ def _transform_species(
 
 
 def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
+    """Transform all species in the parsed model into the appropriate transformed model form."""
     LOGGER.debug("Species name | type | only subs. | boundary cond.")
     for k, var in pmodel.variables.items():
         _transform_species(k, var, pmodel, tmodel, ctx=ctx)
 
 
 def transform(doc: pdata.Document) -> data.Model:
+    """Transform a parsed SBML document into a simplified sympy-based model."""
     for plugin in doc.plugins:
         if plugin.name == "comp":
             msg = "Comp package not yet supported."

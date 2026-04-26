@@ -1,3 +1,5 @@
+"""Utilities for converting SBML identifiers to valid Python names."""
+
 from __future__ import annotations
 
 import keyword
@@ -20,6 +22,7 @@ def _ascii_to_character(re_sub: re.Match) -> str:
 
 
 def name_to_py(name: str) -> str:
+    """Convert an SBML identifier to a valid Python variable name."""
     name = RE_FROM_SBML.sub(_ascii_to_character, name)
     name = RE_KWDS.sub(_escape_keyword, name)
     name = (

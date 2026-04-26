@@ -1,3 +1,5 @@
+"""SBML Level 1/2/3 parser: converts libsbml model objects to pysbml data classes."""
+
 import itertools as it
 import logging
 import math
@@ -50,10 +52,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 def handle_nan(value: float) -> float:
+    """Return math.nan if value stringifies to 'nan', else return value unchanged."""
     return math.nan if str(value) == "nan" else value
 
 
 def parse_constraints(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse all constraints from the libsbml model into model.constraints."""
     for con in lib_model.getListOfConstraints():
         name = con.getId()
 
@@ -112,6 +116,7 @@ def _parse_event_assignment(assignment: libsbml.AssignmentRule) -> Assignment:
 
 
 def parse_events(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse all events from the libsbml model into model.events."""
     for e in lib_model.getListOfEvents():
         name = e.getId()
 
@@ -127,6 +132,7 @@ def parse_events(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_units(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse unit definitions from the libsbml model into model.atomic_units and composite_units."""
     unit_definition: libsbml.UnitDefinition
     unit: libsbml.Unit
 
@@ -150,6 +156,7 @@ def parse_units(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_compartments(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse compartments from the libsbml model into model.compartments."""
     compartment: libsbml.Compartment
 
     for compartment in lib_model.getListOfCompartments():
@@ -164,6 +171,7 @@ def parse_compartments(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_parameters(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse parameters from the libsbml model into model.parameters."""
     parameter: libsbml.Parameter
 
     for parameter in lib_model.getListOfParameters():
@@ -175,6 +183,7 @@ def parse_parameters(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_species(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse species from the libsbml model into model.variables."""
     for compound in lib_model.getListOfSpecies():
         compound_id = name_to_py(compound.getId())
         conversion_factor: str | None = (
@@ -203,6 +212,7 @@ def parse_species(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_functions(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse function definitions from the libsbml model into model.functions."""
     for func in lib_model.getListOfFunctionDefinitions():
         # Sure, why not just have one name
         name = func.getName()
@@ -226,6 +236,7 @@ def parse_functions(model: Model, lib_model: libsbml.Model) -> None:
 
 
 def parse_initial_assignments(model: Model, lib_model: libsbml.Model) -> None:
+    """Parse initial assignments from the libsbml model into model.initial_assignments."""
     for assignment in lib_model.getListOfInitialAssignments():
         name = name_to_py(assignment.getSymbol())
 
@@ -326,9 +337,9 @@ def _parse_local_parameters(
 def _parse_stoichiometries(
     model: Model, reaction: libsbml.Reaction
 ) -> dict[str, int | list[tuple[float, str]]]:
-    """Parse reaction stoichiometries
+    """Parse reaction stoichiometries.
 
-    Stoichiometries can be multiple things
+    Stoichiometries can be multiple things:
     - species
     - boundary species
     - references
@@ -384,6 +395,7 @@ def _parse_stoichiometries(
 
 
 def parse_reactions(model: Model, sbml_model: libsbml.Model) -> None:
+    """Parse reactions from the libsbml model into model.reactions."""
     for reaction in sbml_model.getListOfReactions():
         name = name_to_py(reaction.getId())
         kinetic_law = reaction.getKineticLaw()
@@ -411,7 +423,6 @@ def parse(
     level: int,  # noqa: ARG001
 ) -> Model:
     """Parse sbml model."""
-
     model = pdata.Model(
         name=lib_model.getName(),  # type: ignore
         conversion_factor=None  # type: ignore

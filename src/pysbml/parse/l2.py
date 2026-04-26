@@ -1,3 +1,5 @@
+"""Stub for SBML Level 2 parser (delegates to l1)."""
+
 import logging
 
 from pysbml.parse.units import get_unit_conversion

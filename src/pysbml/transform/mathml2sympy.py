@@ -1,3 +1,5 @@
+"""Convert parsed MathML AST nodes to sympy expressions."""
+
 from __future__ import annotations
 
 import itertools as it
@@ -229,4 +231,5 @@ def _handle_node(
 
 
 def convert_mathml(node: mathml.Base, fns: dict[str, data.Expr]) -> sympy.Expr:
+    """Convert a MathML AST node to a sympy expression, substituting known functions."""
     return _handle_node(node=node, fns=fns)

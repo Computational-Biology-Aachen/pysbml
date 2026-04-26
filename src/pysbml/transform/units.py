@@ -1,3 +1,5 @@
+"""Sympy unit objects and prefix mappings for SBML unit transformation."""
+
 from __future__ import annotations
 
 from sympy import S

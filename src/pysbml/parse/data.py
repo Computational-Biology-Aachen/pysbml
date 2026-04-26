@@ -1,3 +1,5 @@
+"""Data classes for the raw SBML parse layer."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -38,6 +40,7 @@ def md_table_from_dict(
     headers: list[str],
     els: Iterable[Iterable[Any]],
 ) -> str:
+    """Render a markdown table from a list of headers and rows."""
     cols = len(headers)
     fmt = "| {} | ".format(" | ".join("{}" for _ in range(cols)))
 
@@ -48,53 +51,70 @@ def md_table_from_dict(
 
 @dataclass
 class Plugin:
+    """An SBML package plugin attached to a document."""
+
     name: str
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass
 class Document:
+    """Top-level SBML document containing the model and active plugins."""
+
     model: Model
     plugins: list[Plugin]
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class AtomicUnit:
+    """A single SBML unit definition with kind, scale, exponent, and multiplier."""
+
     kind: str
     exponent: int
     scale: int
     multiplier: float
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class CompositeUnit:
+    """A composite SBML unit composed of one or more atomic units."""
+
     sbml_id: str
     units: list
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Parameter:
+    """An SBML parameter with a numeric value, constancy flag, and optional unit."""
+
     value: float
     is_constant: bool
     unit: str | None
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Compartment:
+    """An SBML compartment with spatial dimensions, size, and constancy."""
+
     name: str
     dimensions: int
     size: float
@@ -102,11 +122,14 @@ class Compartment:
     is_constant: bool
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Species:
+    """An SBML species with amount/concentration, compartment, and boundary flags."""
+
     compartment: str | None
     conversion_factor: str | None
     initial_amount: float | None
@@ -117,6 +140,7 @@ class Species:
     is_constant: bool
 
     def is_concentration(self) -> bool:
+        """Return True if this species is defined as a concentration."""
         if self.initial_concentration is not None:
             return True
         if self.has_only_substance_units:
@@ -124,40 +148,52 @@ class Species:
         return False
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Derived:
+    """A derived quantity defined by a MathML body and its free-symbol arguments."""
+
     body: Base
     args: list[Symbol]
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Function:
+    """An SBML function definition with a MathML body and formal arguments."""
+
     body: Base
     args: list[Symbol]
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
 class Reaction:
+    """An SBML reaction with kinetic law, stoichiometry, and local parameters."""
+
     body: Base
     stoichiometry: Mapping[str, float | list[tuple[float, str]]]
     args: list[Symbol]
     local_pars: dict[str, Parameter] = field(default_factory=dict)
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
 
 @dataclass
 class Trigger:
+    """An SBML event trigger with optional math, initial value, and persistence."""
+
     math: Base | None
     args: list[Symbol]
     initial_value: bool
@@ -166,18 +202,24 @@ class Trigger:
 
 @dataclass
 class Delay:
+    """An SBML event delay defined by optional MathML."""
+
     math: Base | None
     args: list[Symbol]
 
 
 @dataclass
 class Priority:
+    """An SBML event priority defined by optional MathML."""
+
     math: Base | None
     args: list[Symbol]
 
 
 @dataclass
 class Assignment:
+    """A single variable assignment within an SBML event."""
+
     variable: str
     math: Base | None
     args: list[Symbol]
@@ -185,6 +227,8 @@ class Assignment:
 
 @dataclass
 class Event:
+    """An SBML event with trigger, delay, priority, and assignment actions."""
+
     assignments: list[Assignment]
     trigger: Trigger | None
     delay: Delay | None
@@ -193,6 +237,8 @@ class Event:
 
 @dataclass
 class Constraint:
+    """An SBML constraint with optional MathML and a message string."""
+
     math: Base | None
     args: list[Symbol]
     message: str
@@ -200,6 +246,8 @@ class Constraint:
 
 @dataclass(kw_only=True, slots=True)
 class Model:
+    """The complete parsed SBML model containing all components."""
+
     name: str
     conversion_factor: str | None = None
     # Collections
@@ -220,6 +268,7 @@ class Model:
     reactions: dict[str, Reaction] = field(default_factory=dict)
 
     def __repr__(self) -> str:
+        """Return formatted string representation."""
         return wl.pformat(self)
 
     def _repr_markdown_(self) -> str:

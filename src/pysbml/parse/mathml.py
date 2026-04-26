@@ -1,3 +1,5 @@
+"""MathML AST node types and libsbml ASTNode dispatch for SBML math parsing."""
+
 from __future__ import annotations
 
 import logging
@@ -18,43 +20,58 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Base: ...
+class Base:
+    """Abstract base class for all MathML AST nodes."""
 
 
 @dataclass
 class Symbol(Base):
+    """A named variable reference in a MathML expression."""
+
     name: str
 
     def __repr__(self) -> str:
+        """Return the symbol name."""
         return self.name
 
 
 @dataclass
 class Constant(Base):
+    """A named mathematical constant (e, pi) in a MathML expression."""
+
     name: str
 
     def __repr__(self) -> str:
+        """Return the constant name."""
         return self.name
 
 
 @dataclass
 class Boolean(Base):
+    """A boolean literal (true or false) in a MathML expression."""
+
     value: bool
 
 
 @dataclass
 class Integer(Base):
+    """An integer literal in a MathML expression."""
+
     value: int
 
     def __repr__(self) -> str:
+        """Return the integer as a string."""
         return f"{self.value}"
 
 
 @dataclass
 class Float(Base):
+    """A floating-point literal in a MathML expression."""
+
     value: float
 
     def __repr__(self) -> str:
+        """Return the float formatted to 2 significant figures."""
         return f"{self.value:.2g}"
 
 
@@ -65,168 +82,234 @@ class Float(Base):
 
 @dataclass
 class Abs(Base):
+    """Absolute value: |child|."""
+
     child: Base
 
 
 @dataclass
 class Ceiling(Base):
+    """Ceiling function: ⌈child⌉."""
+
     child: Base
 
 
 @dataclass
 class Exp(Base):
+    """Exponential: e^child."""
+
     child: Base
 
 
 @dataclass
 class Factorial(Base):
+    """Factorial: child!."""
+
     child: Base
 
 
 @dataclass
 class Floor(Base):
+    """Floor function: ⌊child⌋."""
+
     child: Base
 
 
 @dataclass
 class Ln(Base):
+    """Natural logarithm: ln(child)."""
+
     child: Base
 
 
 @dataclass
 class Log(Base):
+    """Logarithm with explicit base: log_base(child)."""
+
     base: Base
     child: Base
 
 
 @dataclass
 class Sqrt(Base):
+    """Root function: child^(1/base)."""
+
     base: Base
     child: Base
 
 
 @dataclass
 class Sin(Base):
+    """Sine function."""
+
     child: Base
 
 
 @dataclass
 class Cos(Base):
+    """Cosine function."""
+
     child: Base
 
 
 @dataclass
 class Tan(Base):
+    """Tangent function."""
+
     child: Base
 
 
 @dataclass
 class Sec(Base):
+    """Secant function."""
+
     child: Base
 
 
 @dataclass
 class Csc(Base):
+    """Cosecant function."""
+
     child: Base
 
 
 @dataclass
 class Cot(Base):
+    """Cotangent function."""
+
     child: Base
 
 
 @dataclass
 class Asin(Base):
+    """Inverse sine (arcsin) function."""
+
     child: Base
 
 
 @dataclass
 class Acos(Base):
+    """Inverse cosine (arccos) function."""
+
     child: Base
 
 
 @dataclass
 class Atan(Base):
+    """Inverse tangent (arctan) function."""
+
     child: Base
 
 
 @dataclass
 class Acot(Base):
+    """Inverse cotangent (arccot) function."""
+
     child: Base
 
 
 @dataclass
 class ArcSec(Base):
+    """Inverse secant (arcsec) function."""
+
     child: Base
 
 
 @dataclass
 class ArcCsc(Base):
+    """Inverse cosecant (arccsc) function."""
+
     child: Base
 
 
 @dataclass
 class Sinh(Base):
+    """Hyperbolic sine function."""
+
     child: Base
 
 
 @dataclass
 class Cosh(Base):
+    """Hyperbolic cosine function."""
+
     child: Base
 
 
 @dataclass
 class Tanh(Base):
+    """Hyperbolic tangent function."""
+
     child: Base
 
 
 @dataclass
 class Sech(Base):
+    """Hyperbolic secant function."""
+
     child: Base
 
 
 @dataclass
 class Csch(Base):
+    """Hyperbolic cosecant function."""
+
     child: Base
 
 
 @dataclass
 class Coth(Base):
+    """Hyperbolic cotangent function."""
+
     child: Base
 
 
 @dataclass
 class ArcSinh(Base):
+    """Inverse hyperbolic sine (arcsinh) function."""
+
     child: Base
 
 
 @dataclass
 class ArcCosh(Base):
+    """Inverse hyperbolic cosine (arccosh) function."""
+
     child: Base
 
 
 @dataclass
 class ArcTanh(Base):
+    """Inverse hyperbolic tangent (arctanh) function."""
+
     child: Base
 
 
 @dataclass
 class ArcCsch(Base):
+    """Inverse hyperbolic cosecant (arccsch) function."""
+
     child: Base
 
 
 @dataclass
 class ArcSech(Base):
+    """Inverse hyperbolic secant (arcsech) function."""
+
     child: Base
 
 
 @dataclass
 class ArcCoth(Base):
+    """Inverse hyperbolic cotangent (arccoth) function."""
+
     child: Base
 
 
 @dataclass
 class RateOf(Base):
+    """Rate-of-change operator csymbol referencing a target variable."""
+
     target: Base
 
 
@@ -237,15 +320,20 @@ class RateOf(Base):
 
 @dataclass
 class Pow(Base):
+    """Power: left ** right."""
+
     left: Base
     right: Base
 
     def __repr__(self) -> str:
+        """Return infix power expression."""
         return f"{self.left!r} ** {self.right!r}"
 
 
 @dataclass
 class Implies(Base):
+    """Logical implication: left => right."""
+
     left: Base
     right: Base
 
@@ -257,121 +345,161 @@ class Implies(Base):
 
 @dataclass
 class Function(Base):
+    """A user-defined function call with a name and child argument nodes."""
+
     name: str
     children: list[Base]
 
 
 @dataclass
 class Max(Base):
+    """Maximum of two or more child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Min(Base):
+    """Minimum of two or more child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Piecewise(Base):
+    """Piecewise expression with alternating value/condition pairs and optional otherwise."""
+
     children: list[Base]
 
 
 @dataclass
 class Rem(Base):
+    """Remainder (modulo) of two child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Lambda(Base):
+    """Lambda function definition with formal arguments and a body expression."""
+
     fn: Base
     args: list[Base]
 
 
 @dataclass
 class And(Base):
+    """Logical AND of child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Not(Base):
+    """Logical NOT of child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Or(Base):
+    """Logical OR of child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Xor(Base):
+    """Logical XOR of child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Eq(Base):
+    """Equality relation: children[0] == children[1] (== ...)."""
+
     children: list[Base]
 
 
 @dataclass
 class GreaterEqual(Base):
+    """Greater-than-or-equal relation: children[0] >= children[1]."""
+
     children: list[Base]
 
 
 @dataclass
 class GreaterThan(Base):
+    """Strictly-greater-than relation: children[0] > children[1]."""
+
     children: list[Base]
 
 
 @dataclass
 class LessEqual(Base):
+    """Less-than-or-equal relation: children[0] <= children[1]."""
+
     children: list[Base]
 
 
 @dataclass
 class LessThan(Base):
-    """
-    a < b
-    a < b < c
-    """
+    """Less-than relation: a < b or a < b < c."""
 
     children: list[Base]
 
 
 @dataclass
 class NotEqual(Base):
+    """Not-equal relation: children[0] != children[1]."""
+
     children: list[Base]
 
 
 @dataclass
 class Add(Base):
+    """Addition of two or more child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Minus(Base):
+    """Subtraction or negation of child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Mul(Base):
+    """Multiplication of two or more child expressions."""
+
     children: list[Base]
 
     def __repr__(self) -> str:
+        """Return infix multiplication expression."""
         return " * ".join(repr(i) for i in self.children)
 
 
 @dataclass
 class Divide(Base):
+    """Division of two child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class IntDivide(Base):
+    """Integer (quotient) division of two child expressions."""
+
     children: list[Base]
 
 
 @dataclass
 class Delay(Base):
+    """Delay csymbol with expression and delay-time children."""
+
     children: list[Base]
 
 
@@ -520,6 +648,7 @@ def handle_ast_constant_e(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Return the mathematical constant e."""
     return Constant("e")
 
 
@@ -527,6 +656,7 @@ def handle_ast_constant_false(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Return the boolean constant False."""
     return Boolean(value=False)
 
 
@@ -534,6 +664,7 @@ def handle_ast_constant_true(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Return the boolean constant True."""
     return Boolean(value=True)
 
 
@@ -541,6 +672,7 @@ def handle_ast_constant_pi(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Return the mathematical constant pi."""
     return Constant("pi")
 
 
@@ -548,6 +680,7 @@ def handle_ast_function(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle a user-defined function call node."""
     name = node.getName()
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
@@ -561,6 +694,7 @@ def handle_ast_function_abs(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle absolute-value function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Abs(child=child)
@@ -570,6 +704,7 @@ def handle_ast_function_ceiling(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle ceiling function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Ceiling(child=child)
@@ -579,6 +714,7 @@ def handle_ast_function_delay(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle delay csymbol node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -590,6 +726,7 @@ def handle_ast_function_exp(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle exponential function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Exp(child=child)
@@ -599,6 +736,7 @@ def handle_ast_function_factorial(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle factorial function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Factorial(child=child)
@@ -608,6 +746,7 @@ def handle_ast_function_floor(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle floor function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Floor(child=child)
@@ -617,6 +756,7 @@ def handle_ast_function_ln(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle natural logarithm function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return Ln(child=child)
@@ -626,6 +766,7 @@ def handle_ast_function_log(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logarithm-with-base function node."""
     base = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     arg = _handle_ast_node(node=node.getChild(1), func_arguments=func_arguments)
     LOGGER.debug("base: %s, child: %s", base, arg)
@@ -636,6 +777,7 @@ def handle_ast_function_max(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle maximum function node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -648,6 +790,7 @@ def handle_ast_function_min(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle minimum function node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -660,13 +803,10 @@ def handle_ast_function_piecewise(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
-    """
-    <piecewise>
-    <piece> value condition </piece>
-        ....
-    <piece> value condition </piece>
-    <otherwise> value </otherwise>
-    </piecewise>
+    """Handle piecewise function node.
+
+    ``<piecewise>`` contains alternating value/condition ``<piece>`` elements and an
+    optional ``<otherwise>`` default.
     """
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
@@ -680,6 +820,7 @@ def handle_ast_function_power(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle power function node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -692,6 +833,7 @@ def handle_ast_function_rate_of(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle rate-of csymbol node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
     return RateOf(target=child)
@@ -701,6 +843,7 @@ def handle_ast_function_root(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle root (nth-root) function node."""
     base = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     child = _handle_ast_node(node=node.getChild(1), func_arguments=func_arguments)
     LOGGER.debug("child: %s", child)
@@ -711,6 +854,7 @@ def handle_ast_function_rem(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle remainder (modulo) function node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -724,6 +868,7 @@ def handle_ast_integer(
     node: ASTNode,
     func_arguments: list[Symbol],  # noqa: ARG001,
 ) -> Base:
+    """Handle integer literal node."""
     child = node.getValue()
     LOGGER.debug("child: %s", child)
     return Integer(value=child)
@@ -733,10 +878,10 @@ def handle_ast_lambda(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
-    """
-    A function having n variables is specified using a lambda element with n + 1 child elements.
-    Each of the first n child elements is a bvar element that represents one of the variables of the function
-    The (n + 1)th element is an expression that defines the function itself
+    """Parse a lambda element with n bound variables and a body expression.
+
+    A function having n variables uses a lambda element with n + 1 child elements:
+    the first n are bvar elements (bound variable names) and the last is the body.
     """
     # num_b_vars = node.getNumBvars()
     num_children = node.getNumChildren()
@@ -752,6 +897,7 @@ def handle_ast_logical_and(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logical AND node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -764,6 +910,7 @@ def handle_ast_logical_implies(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logical implication node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -775,6 +922,7 @@ def handle_ast_logical_not(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logical NOT node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -787,6 +935,7 @@ def handle_ast_logical_or(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logical OR node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -799,6 +948,7 @@ def handle_ast_logical_xor(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle logical XOR node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -811,6 +961,7 @@ def handle_ast_plus(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle addition node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -823,6 +974,7 @@ def handle_ast_minus(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle subtraction or negation node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -835,6 +987,7 @@ def handle_ast_times(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle multiplication node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -847,6 +1000,7 @@ def handle_ast_divide(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle division node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -859,6 +1013,7 @@ def handle_ast_divide_int(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle integer (quotient) division node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -872,6 +1027,7 @@ def handle_ast_name(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle a named variable reference node, appending to func_arguments if new."""
     name = Symbol(name_to_py(node.getName()))
     if name not in func_arguments:
         func_arguments.append(name)
@@ -883,6 +1039,7 @@ def handle_ast_name_avogadro(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],  # noqa: ARG001,
 ) -> Base:
+    """Return Avogadro's number as a float literal."""
     return Float(6.02214179e23)
 
 
@@ -890,6 +1047,7 @@ def handle_ast_name_time(
     node: ASTNode,  # noqa: ARG001
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle the SBML time csymbol, appending it to func_arguments if not present."""
     name = Symbol("time")
     if name not in func_arguments:
         func_arguments.append(name)
@@ -900,6 +1058,7 @@ def handle_ast_originates_in_package(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle an AST node that originates from an SBML package extension (not yet supported)."""
     raise NotImplementedError
 
 
@@ -907,6 +1066,7 @@ def handle_ast_rational(
     node: ASTNode,
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Handle a rational number node, returning its float value."""
     val = node.getValue()
     LOGGER.debug("val: %s", val)
     return Float(value=val)
@@ -916,6 +1076,7 @@ def handle_ast_real(
     node: ASTNode,
     func_arguments: list[Symbol],  # noqa: ARG001
 ) -> Base:
+    """Handle a real-number node, preserving inf and nan values."""
     value = str(node.getValue())
     LOGGER.debug("value: %s", value)
     if value == "inf":
@@ -931,6 +1092,7 @@ def handle_ast_relational_eq(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle equality relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -943,6 +1105,7 @@ def handle_ast_relational_geq(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle greater-than-or-equal relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -956,6 +1119,7 @@ def handle_ast_relational_gt(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle strictly-greater-than relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -969,6 +1133,7 @@ def handle_ast_relational_leq(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle less-than-or-equal relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -982,6 +1147,7 @@ def handle_ast_relational_lt(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle strictly-less-than relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -994,6 +1160,7 @@ def handle_ast_relational_neq(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle not-equal relational node."""
     children = [
         _handle_ast_node(node=node.getChild(i), func_arguments=func_arguments)
         for i in range(node.getNumChildren())
@@ -1012,6 +1179,7 @@ def handle_ast_trigonometric_sin(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle sine function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Sin(child=child)
 
@@ -1020,6 +1188,7 @@ def handle_ast_trigonometric_cos(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle cosine function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Cos(child=child)
 
@@ -1028,6 +1197,7 @@ def handle_ast_trigonometric_tan(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle tangent function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Tan(child=child)
 
@@ -1036,6 +1206,7 @@ def handle_ast_trigonometric_sec(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle secant function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Sec(child)
 
@@ -1044,6 +1215,7 @@ def handle_ast_trigonometric_csc(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle cosecant function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Csc(child)
 
@@ -1052,6 +1224,7 @@ def handle_ast_trigonometric_cot(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle cotangent function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Cot(child)
 
@@ -1065,6 +1238,7 @@ def handle_ast_trigonometric_arc_sin(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arcsin (inverse sine) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Asin(child)
 
@@ -1073,6 +1247,7 @@ def handle_ast_trigonometric_arc_cos(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccos (inverse cosine) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Acos(child)
 
@@ -1081,6 +1256,7 @@ def handle_ast_trigonometric_arc_tan(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arctan (inverse tangent) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Atan(child)
 
@@ -1089,6 +1265,7 @@ def handle_ast_trigonometric_arc_cot(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccot (inverse cotangent) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Acot(child)
 
@@ -1097,6 +1274,7 @@ def handle_ast_trigonometric_arc_sec(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arcsec (inverse secant) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcSec(child)
 
@@ -1105,6 +1283,7 @@ def handle_ast_trigonometric_arc_csc(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccsc (inverse cosecant) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcCsc(child)
 
@@ -1118,6 +1297,7 @@ def handle_ast_trigonometric_sinh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic sine function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Sinh(child)
 
@@ -1126,6 +1306,7 @@ def handle_ast_trigonometric_cosh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic cosine function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Cosh(child)
 
@@ -1134,6 +1315,7 @@ def handle_ast_trigonometric_tanh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic tangent function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Tanh(child)
 
@@ -1142,6 +1324,7 @@ def handle_ast_trigonometric_sech(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic secant function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Sech(child)
 
@@ -1150,6 +1333,7 @@ def handle_ast_trigonometric_csch(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic cosecant function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Csch(child)
 
@@ -1158,6 +1342,7 @@ def handle_ast_trigonometric_coth(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle hyperbolic cotangent function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return Coth(child)
 
@@ -1171,6 +1356,7 @@ def handle_ast_trigonometric_arc_sinh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arcsinh (inverse hyperbolic sine) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcSinh(child)
 
@@ -1179,6 +1365,7 @@ def handle_ast_trigonometric_arc_cosh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccosh (inverse hyperbolic cosine) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcCosh(child)
 
@@ -1187,6 +1374,7 @@ def handle_ast_trigonometric_arc_tanh(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arctanh (inverse hyperbolic tangent) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcTanh(child)
 
@@ -1195,6 +1383,7 @@ def handle_ast_trigonometric_arc_csch(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccsch (inverse hyperbolic cosecant) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcCsch(child)
 
@@ -1203,6 +1392,7 @@ def handle_ast_trigonometric_arc_sech(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arcsech (inverse hyperbolic secant) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
     return ArcSech(child)
 
@@ -1211,6 +1401,7 @@ def handle_ast_trigonometric_arc_coth(
     node: ASTNode,
     func_arguments: list[Symbol],
 ) -> Base:
+    """Handle arccoth (inverse hyperbolic cotangent) function node."""
     child = _handle_ast_node(node=node.getChild(0), func_arguments=func_arguments)
 
     return ArcCoth(child)
@@ -1293,6 +1484,7 @@ def _handle_ast_node(node: ASTNode, func_arguments: list[Symbol]) -> Base:
 
 
 def parse_sbml_math(node: ASTNode) -> tuple[Base, list[Symbol]]:
+    """Parse a libsbml ASTNode into a (body, free_symbols) pair."""
     func_arguments: list[Any] = []
     try:
         body = _handle_ast_node(node=node, func_arguments=func_arguments)
