@@ -14,7 +14,7 @@ y0 = [C, S1, S2, S3]
 variable_names = ["C", "S1", "S2", "S3"]
 
 
-def model(time: float, variables: tuple[float, ...]) -> tuple[float, ...]:
+def model(time: float, variables: Iterable[float]) -> Iterable[float]:
     C, S1, S2, S3 = variables
     dC: float = -C * p1
     reaction1: float = C * S1 * S2 * k1
