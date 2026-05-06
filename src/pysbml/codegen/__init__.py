@@ -146,6 +146,22 @@ def codegen(model: tdata.Model) -> str:
                 diff_eqs.get(var, sympy.Float(0.0)), _mul_expr(stoich, name)
             )
 
+    # Events: compute here so event-target variables are in diff_eqs before filter
+    active_events = [
+        (name, ev) for name, ev in model.events.items() if ev.trigger is not None
+    ]
+
+    # Event-assigned variables need dSdt=0 even without a reaction
+    event_target_vars = {
+        var
+        for _, ev in active_events
+        for var in ev.assignments
+        if var in model.variables
+    }
+    for v in event_target_vars:
+        if v not in diff_eqs:
+            diff_eqs[v] = sympy.Float(0.0)
+
     all_args = set()
     for derived in model.derived.values():
         all_args.update(free_symbols(derived))
@@ -163,6 +179,7 @@ def codegen(model: tdata.Model) -> str:
         "import math",
         "import scipy.special",
         "import pandas as pd",
+        "from typing import TYPE_CHECKING",
         "",
         "time: float = 0.0",
     ]
@@ -190,7 +207,7 @@ def codegen(model: tdata.Model) -> str:
 
     # Write main function
     source.append(
-        "\ndef model(time: float, variables: tuple[float, ...]) -> tuple[float, ...]:",
+        "\ndef model(time: float, variables: Iterable[float]) -> Iterable[float]:",
     )
     if len(variable_names) > 0:
         source.append(
@@ -217,7 +234,7 @@ def codegen(model: tdata.Model) -> str:
 
     # Additional variables
     source.append(
-        "\n\ndef derived(time: float, variables: tuple[float, ...]) -> dict[str, float]:"
+        "\n\ndef derived(time: float, variables: Iterable[float]) -> dict[str, float]:"
     )
     if len(variable_names) > 0:
         source.append(
@@ -238,5 +255,88 @@ def codegen(model: tdata.Model) -> str:
             f"{INDENT}}}",
         ]
     )
+
+    # Derived expressions needed in event functions (computed in topological order)
+    derived_in_order = [name for name in order if name in model.derived]
+
+    for event_name, event in active_events:
+        unpack = (
+            (
+                f"{INDENT}{', '.join(variable_names)} = variables"
+                if len(variable_names) > 1
+                else f"{INDENT}{variable_names[0]}, = variables"
+            )
+            if variable_names
+            else None
+        )
+
+        source.append(
+            f"\n\ndef _event_{event_name}_trigger(time: float, variables: Iterable[float]) -> float:"
+        )
+        if unpack:
+            source.append(unpack)
+        for dname in derived_in_order:
+            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+        source.append(
+            f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.trigger))}) - 0.5"
+        )
+        source.append(f"_event_{event_name}_trigger.terminal = True")
+        source.append(f"_event_{event_name}_trigger.direction = 1")
+
+        source.append(
+            f"\n\ndef _event_{event_name}_assignments(time: float, variables: Iterable[float]) -> dict[str, float]:"
+        )
+        if unpack:
+            source.append(unpack)
+        for dname in derived_in_order:
+            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+        source.extend(
+            [
+                f"{INDENT}return {{",
+                *(
+                    f"{INDENT * 2}{var!r}: {codegen_expr(assign_expr)},"
+                    for var, assign_expr in event.assignments.items()
+                ),
+                f"{INDENT}}}",
+            ]
+        )
+
+        if event.delay is not None:
+            source.append(
+                f"\n\ndef _event_{event_name}_delay(time: float, variables: Iterable[float]) -> float:"
+            )
+            if unpack:
+                source.append(unpack)
+            for dname in derived_in_order:
+                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+            source.append(
+                f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.delay))})"
+            )
+
+        if event.priority is not None:
+            source.append(
+                f"\n\ndef _event_{event_name}_priority(time: float, variables: Iterable[float]) -> float:"
+            )
+            if unpack:
+                source.append(unpack)
+            for dname in derived_in_order:
+                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+            source.append(
+                f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.priority))})"
+            )
+
+    event_tuples = ", ".join(
+        "({trigger}, {assign}, {iv}, {pers}, {delay}, {prio}, {uvftt})".format(
+            trigger=f"_event_{name}_trigger",
+            assign=f"_event_{name}_assignments",
+            iv=event.initial_value,
+            pers=event.persistent,
+            delay=f"_event_{name}_delay" if event.delay is not None else "None",
+            prio=f"_event_{name}_priority" if event.priority is not None else "None",
+            uvftt=event.use_values_from_trigger_time,
+        )
+        for name, event in active_events
+    )
+    source.append(f"\nevents: list = [{event_tuples}]")
 
     return "\n".join(source)

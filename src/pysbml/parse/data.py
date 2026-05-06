@@ -233,6 +233,7 @@ class Event:
     trigger: Trigger | None
     delay: Delay | None
     priority: Priority | None
+    use_values_from_trigger_time: bool = True
 
 
 @dataclass

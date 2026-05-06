@@ -128,6 +128,7 @@ def parse_events(model: Model, lib_model: libsbml.Model) -> None:
                 _parse_event_assignment(e.getEventAssignment(i))
                 for i in range(e.getNumEventAssignments())
             ],
+            use_values_from_trigger_time=bool(e.getUseValuesFromTriggerTime()),
         )
 
 

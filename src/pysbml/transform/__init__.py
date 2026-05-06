@@ -62,6 +62,7 @@ Source: https://sbml.org/software/libsbml/5.18.0/docs/formatted/python-api/class
 
 """
 
+import dataclasses
 import logging
 import math
 from collections import defaultdict
@@ -73,10 +74,12 @@ from typing import cast
 import sympy
 
 from pysbml.parse import data as pdata
+from pysbml.parse.mathml import Base as MathMLBase
+from pysbml.parse.mathml import Symbol as MathMLSymbol
 from pysbml.transform.units import CONVERSION, PREFIXES
 
 from . import data
-from .mathml2sympy import convert_mathml
+from .mathml2sympy import SBMLDelay, convert_mathml
 
 LOGGER = logging.getLogger(__name__)
 
@@ -118,6 +121,30 @@ def _mul_expr(
     return _to_sympy_types(x) * _to_sympy_types(y)  # type: ignore
 
 
+def _mathml_symbol_names(node: MathMLBase) -> set[str]:
+    """Recursively collect all Symbol names from a MathML AST node."""
+    if isinstance(node, MathMLSymbol):
+        return {node.name}
+    result: set[str] = set()
+    for f in dataclasses.fields(node):  # type: ignore[arg-type]
+        val = getattr(node, f.name)
+        if isinstance(val, MathMLBase):
+            result |= _mathml_symbol_names(val)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, MathMLBase):
+                    result |= _mathml_symbol_names(item)
+    return result
+
+
+def _compartment_in_algebraic_rules(comp: str, pmodel: pdata.Model) -> bool:
+    """Return True if comp appears as a free symbol in any algebraic rule."""
+    return any(
+        comp in _mathml_symbol_names(rule.body)
+        for rule in pmodel.algebraic_rules.values()
+    )
+
+
 def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
     """Return True if the species' compartment exists and has a non-zero, non-nan size."""
     if (comp := species.compartment) is None:
@@ -129,6 +156,7 @@ def compartment_is_valid(pmodel: pdata.Model, species: pdata.Species) -> bool:
         )
         or comp in pmodel.assignment_rules
         or comp in pmodel.initial_assignments
+        or _compartment_in_algebraic_rules(comp, pmodel)
     )
 
 
@@ -168,20 +196,53 @@ def convert_constraints(
     pmodel: pdata.Model,
     tmodel: data.Model,  # noqa: ARG001
 ) -> None:
-    """Raise NotImplementedError — constraint handling is not yet supported."""
-    for _ in pmodel.constraints.items():
-        msg = "Constraint handling not yet supported"
-        raise NotImplementedError(msg)
+    """Skip constraints — not modelled in the ODE system."""
+    for name in pmodel.constraints:
+        LOGGER.warning("Constraint %s ignored (not supported)", name)
 
 
-def convert_events(
-    pmodel: pdata.Model,
-    tmodel: data.Model,  # noqa: ARG001
-) -> None:
-    """Raise NotImplementedError — event handling is not yet supported."""
-    for _ in pmodel.events.items():
-        msg = "Event handling not yet supported"
-        raise NotImplementedError(msg)
+def convert_events(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Convert SBML events to sympy trigger and assignment expressions."""
+    for name, pevent in pmodel.events.items():
+        if pevent.trigger is None or pevent.trigger.math is None:
+            LOGGER.warning("Event %s has no trigger math, skipping", name)
+            continue
+
+        trigger = convert_mathml(pevent.trigger.math, fns=tmodel.functions)
+
+        assignments: dict[str, sympy.Expr] = {}
+        for assignment in pevent.assignments:
+            if assignment.math is None:
+                LOGGER.warning(
+                    "Event %s assignment for %s has no math, skipping",
+                    name,
+                    assignment.variable,
+                )
+                continue
+            assignments[assignment.variable] = convert_mathml(
+                assignment.math, fns=tmodel.functions
+            )
+
+        delay = (
+            convert_mathml(pevent.delay.math, fns=tmodel.functions)
+            if pevent.delay is not None and pevent.delay.math is not None
+            else None
+        )
+        priority = (
+            convert_mathml(pevent.priority.math, fns=tmodel.functions)
+            if pevent.priority is not None and pevent.priority.math is not None
+            else None
+        )
+
+        tmodel.events[name] = data.Event(
+            trigger=trigger,
+            assignments=assignments,
+            initial_value=pevent.trigger.initial_value,
+            persistent=pevent.trigger.persistent,
+            delay=delay,
+            priority=priority,
+            use_values_from_trigger_time=pevent.use_values_from_trigger_time,
+        )
 
 
 def convert_functions(pmodel: pdata.Model, tmodel: data.Model) -> None:
@@ -226,9 +287,7 @@ def convert_rules_and_initial_assignments(
             stoichiometry={name: sympy.Float(1.0)},
         )
 
-    for _ in pmodel.algebraic_rules.items():
-        msg = "Algebraic rules not yet supported"
-        raise NotImplementedError(msg)
+    # Algebraic rules are processed after transform_species in convert_algebraic_rules
 
     for name, ar in pmodel.assignment_rules.items():
         tmodel.derived[name] = convert_mathml(ar.body, fns=tmodel.functions)
@@ -358,6 +417,27 @@ def _handle_amount(
         if (s := rxn.stoichiometry.get(k)) is not None:
             rxn.stoichiometry[k] = _mul_expr(s, compartment)
 
+    # Fix derived (assignment) rules: k appears as concentration in math
+    k_sym = sympy.Symbol(k)
+    k_conc_sym = sympy.Symbol(k_conc)
+    for dname in ctx.ass_rules_by_var[k]:
+        if dname != k:
+            tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k_sym, k_conc_sym))
+
+    # Fix events: hasOnlySubstanceUnits=False means k in expressions = concentration
+    k_conc_expr = _div_expr(k, compartment)
+    for ev in tmodel.events.values():
+        if ev.trigger is not None:
+            ev.trigger = expr(ev.trigger.subs(k_sym, k_conc_expr))
+        new_assignments = {}
+        for var, assign_expr in ev.assignments.items():
+            new_expr = expr(assign_expr.subs(k_sym, k_conc_expr))
+            if var == k:
+                # Assignment sets concentration → convert to amount
+                new_expr = _mul_expr(new_expr, compartment)
+            new_assignments[var] = new_expr
+        ev.assignments = new_assignments
+
 
 def _handle_amount_boundary(
     k: str,
@@ -386,8 +466,12 @@ def _handle_amount_boundary(
     if (ar := tmodel.initial_assignments.get(k)) is not None:
         tmodel.initial_assignments[k] = _mul_expr(ar, compartment)
 
-    # Fix assignment rules
-    # Nothing to do here :)
+    # Fix derived (assignment) rules: k appears as concentration in math
+    k_sym = sympy.Symbol(k)
+    k_conc_sym = sympy.Symbol(k_conc)
+    for dname in ctx.ass_rules_by_var[k]:
+        if dname != k:
+            tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k_sym, k_conc_sym))
 
     # Fix rate rule
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
@@ -405,6 +489,20 @@ def _handle_amount_boundary(
 
         # Boundary condition means it cannot be part of the reactions system, so we
         # don't need to worry about the stoichiometry
+
+    # Fix events: hasOnlySubstanceUnits=False means k in expressions = concentration
+    k_conc_expr = _div_expr(k, compartment)
+    for ev in tmodel.events.values():
+        if ev.trigger is not None:
+            ev.trigger = expr(ev.trigger.subs(k_sym, k_conc_expr))
+        new_assignments = {}
+        for var, assign_expr in ev.assignments.items():
+            new_expr = expr(assign_expr.subs(k_sym, k_conc_expr))
+            if var == k:
+                # Assignment sets concentration → convert to amount
+                new_expr = _mul_expr(new_expr, compartment)
+            new_assignments[var] = new_expr
+        ev.assignments = new_assignments
 
 
 def _handle_amount_has_substance_units(
@@ -582,6 +680,31 @@ def _handle_conc_boundary(
     # Fix reactions
     # Nothing to do here, boundary species cannot have reactions :)
 
+    # Fix events: k in expressions = concentration = k_conc
+    k_sym = sympy.Symbol(k)
+    k_conc_sym = sympy.Symbol(k_conc)
+    comp_sym = sympy.Symbol(compartment)
+    for ev in tmodel.events.values():
+        if ev.trigger is not None:
+            ev.trigger = expr(ev.trigger.subs(k_sym, k_conc_sym))
+        if ev.delay is not None:
+            ev.delay = expr(ev.delay.subs(k_sym, k_conc_sym))
+        if ev.priority is not None:
+            ev.priority = expr(ev.priority.subs(k_sym, k_conc_sym))
+        new_assignments = {}
+        for var, assign_expr in ev.assignments.items():
+            new_expr = expr(assign_expr.subs(k_sym, k_conc_sym))
+            if var == k:
+                if compartment in ev.assignments:
+                    # Both species and compartment assigned: amount = formula*C_trigger,
+                    # concentration = amount / C_new = formula * C_trigger / C_new_formula
+                    comp_new = ev.assignments[compartment]
+                    new_expr = expr(new_expr * comp_sym / comp_new)
+                new_assignments[k_conc] = new_expr
+            else:
+                new_assignments[var] = new_expr
+        ev.assignments = new_assignments
+
 
 def _handle_conc_has_substance_units(
     k: str,
@@ -657,9 +780,6 @@ def _transform_species(
     Substitutes the correct concentration or amount expression wherever the species
     identifier appears in reactions, rules, and initial assignments.
     """
-    if species.conversion_factor is not None:
-        raise NotImplementedError
-
     init = sympy.Float(
         init
         if (init := species.initial_amount) is not None
@@ -823,17 +943,239 @@ def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None
         _transform_species(k, var, pmodel, tmodel, ctx=ctx)
 
 
+def _find_algebraic_floating_var(
+    body_expr: sympy.Expr,
+    pmodel: pdata.Model,
+) -> str | None:
+    """Return the variable name that an algebraic rule uniquely determines.
+
+    The floating variable is a non-constant quantity that is not already
+    determined by an assignment rule, rate rule, or reaction stoichiometry.
+    """
+    free = {s.name for s in body_expr.free_symbols if isinstance(s, sympy.Symbol)}
+
+    determined: set[str] = set(pmodel.assignment_rules) | set(pmodel.rate_rules)
+    for rxn in pmodel.reactions.values():
+        for sp_name, stoich in rxn.stoichiometry.items():
+            if isinstance(stoich, list) or stoich != 0:
+                determined.add(sp_name)
+
+    candidates: set[str] = set()
+    for name in free:
+        if (
+            (name in pmodel.parameters and not pmodel.parameters[name].is_constant)
+            or (name in pmodel.variables and not pmodel.variables[name].is_constant)
+            or (
+                name in pmodel.compartments
+                and not pmodel.compartments[name].is_constant
+            )
+        ):
+            candidates.add(name)
+
+    candidates -= determined
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def convert_algebraic_rules(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Resolve each algebraic rule by identifying and substituting its floating variable.
+
+    Must be called *after* transform_species so concentration aliases (S_conc) are known.
+    """
+    for rule_name, rule in pmodel.algebraic_rules.items():
+        body_expr = convert_mathml(rule.body, fns=tmodel.functions)
+
+        floating_var = _find_algebraic_floating_var(body_expr, pmodel)
+        if floating_var is None:
+            LOGGER.warning(
+                "Could not identify floating variable in algebraic rule %s; skipping",
+                rule_name,
+            )
+            continue
+
+        # Build substitutions: species that were transformed to amount form use
+        # their _conc alias in rule expressions (SBML species = concentration there).
+        conc_subs: dict[sympy.Symbol, sympy.Symbol] = {}
+        for sym_name in (
+            s.name for s in body_expr.free_symbols if isinstance(s, sympy.Symbol)
+        ):
+            if sym_name != floating_var and f"{sym_name}_conc" in tmodel.derived:
+                conc_subs[sympy.Symbol(sym_name)] = sympy.Symbol(f"{sym_name}_conc")
+
+        float_has_conc = f"{floating_var}_conc" in tmodel.derived
+        if float_has_conc:
+            float_solve_sym = sympy.Symbol(f"{floating_var}_conc")
+            body_to_solve = body_expr.subs(conc_subs).subs(
+                sympy.Symbol(floating_var), float_solve_sym
+            )
+        else:
+            float_solve_sym = sympy.Symbol(floating_var)
+            body_to_solve = expr(body_expr.subs(conc_subs))
+
+        solutions = sympy.solve(body_to_solve, float_solve_sym)
+        if not solutions:
+            LOGGER.warning(
+                "Could not solve algebraic rule %s for %s; skipping",
+                rule_name,
+                floating_var,
+            )
+            continue
+
+        solution = cast(sympy.Expr, solutions[0])
+
+        if float_has_conc:
+            # Replace the placeholder _conc derived expression with the solved one.
+            tmodel.derived[f"{floating_var}_conc"] = solution
+            compartment = cast(str, pmodel.variables[floating_var].compartment)
+            tmodel.derived[floating_var] = _mul_expr(solution, compartment)
+        else:
+            tmodel.derived[floating_var] = solution
+
+        tmodel.variables.pop(floating_var, None)
+        tmodel.parameters.pop(floating_var, None)
+
+
+def apply_conversion_factors(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
+    """Multiply reaction stoichiometries by per-species conversion factors."""
+    model_cf = pmodel.conversion_factor
+    for k, species in pmodel.variables.items():
+        cf_name = species.conversion_factor or model_cf
+        if cf_name is None:
+            continue
+        cf_sym = sympy.Symbol(cf_name)
+        for rxn_name in ctx.rxns_by_var[k]:
+            rxn = tmodel.reactions[rxn_name]
+            for key in (k, f"{k}_amount"):
+                if key in rxn.stoichiometry:
+                    rxn.stoichiometry[key] = _mul_expr(rxn.stoichiometry[key], cf_sym)
+
+
+def substitute_rate_of(tmodel: data.Model) -> None:
+    """Replace __rateOf_x__ sentinel symbols with the actual dx/dt expressions."""
+    rate_exprs: dict[str, sympy.Expr] = {}
+    for rxn in tmodel.reactions.values():
+        for var, stoich in rxn.stoichiometry.items():
+            rate_exprs[var] = cast(
+                sympy.Expr,
+                rate_exprs.get(var, sympy.Float(0.0)) + _mul_expr(stoich, rxn.expr),
+            )
+
+    # Constant parameters and variables with no reactions → rate = 0
+    for name in list(tmodel.parameters) + list(tmodel.variables):
+        if name not in rate_exprs:
+            rate_exprs[name] = sympy.Float(0.0)
+
+    subs_dict = {
+        sympy.Symbol(f"__rateOf_{var}__"): rate_expr
+        for var, rate_expr in rate_exprs.items()
+    }
+
+    # Any remaining __rateOf_*__ sentinels (e.g. local params) → rate = 0
+    def _collect_all_exprs() -> list[sympy.Expr]:
+        result: list[sympy.Expr] = []
+        for rxn in tmodel.reactions.values():
+            result.append(rxn.expr)
+        for e in tmodel.derived.values():
+            result.append(e)
+        for e in tmodel.initial_assignments.values():
+            result.append(e)
+        for ev in tmodel.events.values():
+            if ev.trigger is not None:
+                result.append(ev.trigger)
+            result.extend(ev.assignments.values())
+            if ev.delay is not None:
+                result.append(ev.delay)
+            if ev.priority is not None:
+                result.append(ev.priority)
+        return result
+
+    for e in _collect_all_exprs():
+        for sym in e.free_symbols:
+            if (
+                isinstance(sym, sympy.Symbol)
+                and sym.name.startswith("__rateOf_")
+                and sym not in subs_dict
+            ):
+                subs_dict[sym] = sympy.Float(0.0)
+
+    for rxn in tmodel.reactions.values():
+        rxn.expr = expr(rxn.expr.subs(subs_dict))
+
+    for name in list(tmodel.derived):
+        tmodel.derived[name] = expr(tmodel.derived[name].subs(subs_dict))
+
+    for name in list(tmodel.initial_assignments):
+        tmodel.initial_assignments[name] = expr(
+            tmodel.initial_assignments[name].subs(subs_dict)
+        )
+
+    for ev in tmodel.events.values():
+        if ev.trigger is not None:
+            ev.trigger = expr(ev.trigger.subs(subs_dict))
+        ev.assignments = {
+            var: expr(assign_expr.subs(subs_dict))
+            for var, assign_expr in ev.assignments.items()
+        }
+        if ev.delay is not None:
+            ev.delay = expr(ev.delay.subs(subs_dict))
+        if ev.priority is not None:
+            ev.priority = expr(ev.priority.subs(subs_dict))
+
+
+def substitute_delays(tmodel: data.Model) -> None:
+    """Replace SBMLDelay(x, d) sentinels with time-shifted expressions where possible.
+
+    - Assignment rules: substitute time → time - d directly (exact).
+    - Variables with initial assignment but no dynamics: piecewise(history, t<d, x).
+    - Fallback: return current value (ignores delay, approximate).
+    """
+    time_sym = sympy.Symbol("time")
+
+    has_dynamics: set[str] = {
+        var for rxn in tmodel.reactions.values() for var in rxn.stoichiometry
+    }
+
+    def resolve(target_expr: sympy.Expr, delay_amt: sympy.Expr) -> sympy.Expr:
+        if not isinstance(target_expr, sympy.Symbol):
+            return target_expr
+        name = target_expr.name
+
+        if name in tmodel.derived:
+            return expr(tmodel.derived[name].subs(time_sym, time_sym - delay_amt))
+
+        if name in tmodel.initial_assignments and name not in has_dynamics:
+            history = expr(
+                tmodel.initial_assignments[name].subs(time_sym, time_sym - delay_amt)
+            )
+            return expr(
+                sympy.Piecewise((history, time_sym < delay_amt), (target_expr, True))
+            )
+
+        return target_expr
+
+    def _sub(e: sympy.Expr) -> sympy.Expr:
+        if e.has(SBMLDelay):
+            return expr(e.replace(SBMLDelay, resolve))
+        return e
+
+    for name in list(tmodel.derived):
+        tmodel.derived[name] = _sub(tmodel.derived[name])
+    for name in list(tmodel.initial_assignments):
+        tmodel.initial_assignments[name] = _sub(tmodel.initial_assignments[name])
+    for rxn in tmodel.reactions.values():
+        rxn.expr = _sub(rxn.expr)
+    for ev in tmodel.events.values():
+        if ev.trigger is not None:
+            ev.trigger = _sub(ev.trigger)
+        ev.assignments = {var: _sub(e) for var, e in ev.assignments.items()}
+        if ev.delay is not None:
+            ev.delay = _sub(ev.delay)
+        if ev.priority is not None:
+            ev.priority = _sub(ev.priority)
+
+
 def transform(doc: pdata.Document) -> data.Model:
     """Transform a parsed SBML document into a simplified sympy-based model."""
-    for plugin in doc.plugins:
-        if plugin.name == "comp":
-            msg = "Comp package not yet supported."
-            raise NotImplementedError(msg)
-
     pmodel = doc.model
-    if pmodel.conversion_factor is not None:
-        msg = "Conversion factors not yet supported"
-        raise NotImplementedError(msg)
 
     ctx = Ctx(rxns_by_var=defaultdict(set), ass_rules_by_var=defaultdict(set))
     for name, rxn in pmodel.reactions.items():
@@ -851,12 +1193,24 @@ def transform(doc: pdata.Document) -> data.Model:
     convert_parameters(pmodel=pmodel, tmodel=tmodel)
     convert_compartments(pmodel=pmodel, tmodel=tmodel)
     convert_constraints(pmodel=pmodel, tmodel=tmodel)
-    convert_events(pmodel=pmodel, tmodel=tmodel)
     convert_functions(pmodel=pmodel, tmodel=tmodel)
+    convert_events(pmodel=pmodel, tmodel=tmodel)
     convert_rules_and_initial_assignments(pmodel=pmodel, tmodel=tmodel)
     convert_reactions(pmodel=pmodel, tmodel=tmodel)
 
     # Do the heavy lifting here
     transform_species(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
+    apply_conversion_factors(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
     remove_duplicate_entries(tmodel=tmodel)
+    convert_algebraic_rules(pmodel=pmodel, tmodel=tmodel)
+    substitute_rate_of(tmodel=tmodel)
+    substitute_delays(tmodel=tmodel)
+
+    # Event-assigned parameters must be variables so the ODE state tracks changes
+    event_targets = {var for ev in tmodel.events.values() for var in ev.assignments}
+    for name in list(event_targets):
+        if name in tmodel.parameters:
+            par = tmodel.parameters.pop(name)
+            tmodel.variables[name] = data.Variable(value=par.value, unit=par.unit)
+
     return tmodel

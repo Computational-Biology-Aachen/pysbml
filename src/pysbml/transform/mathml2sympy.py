@@ -12,7 +12,14 @@ import sympy
 
 from pysbml.parse import mathml
 
-__all__ = ["LOGGER", "convert_mathml"]
+__all__ = ["LOGGER", "SBMLDelay", "convert_mathml"]
+
+
+class SBMLDelay(sympy.Function):
+    """Sentinel for SBML delay(expr, d) — resolved by substitute_delays()."""
+
+    nargs = 2
+
 
 if TYPE_CHECKING:
     from pysbml.transform import data
@@ -131,7 +138,9 @@ def _handle_node(
                 _handle_node(right, fns, as_number=True),
             )
         case mathml.Implies(left, right):
-            raise NotImplementedError
+            l = _handle_node(left, fns, as_bool=True)
+            r = _handle_node(right, fns, as_bool=True)
+            return sympy.Or(sympy.Not(l), r)
         # n-ary
         case mathml.Function(name, children):
             fn = fns[name]
@@ -226,6 +235,18 @@ def _handle_node(
             return reduce(
                 op.floordiv, (_handle_node(i, fns, as_number=True) for i in children)
             )
+        case mathml.RateOf(target):
+            target_expr = _handle_node(target, fns)
+            target_name = (
+                target_expr.name
+                if isinstance(target_expr, sympy.Symbol)
+                else str(target_expr)
+            )
+            return sympy.Symbol(f"__rateOf_{target_name}__")
+        case mathml.Delay(children):
+            target = _handle_node(children[0], fns, as_number=as_number)
+            delay_amt = _handle_node(children[1], fns, as_number=True)
+            return SBMLDelay(target, delay_amt)
         case _:
             raise NotImplementedError(type(node))
 
