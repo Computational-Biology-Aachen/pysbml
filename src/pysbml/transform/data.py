@@ -9,7 +9,15 @@ import wadler_lindig as wl
 
 from pysbml.parse.data import md_table_from_dict
 
-__all__ = ["Expr", "Model", "Parameter", "Reaction", "Stoichiometry", "Variable"]
+__all__ = [
+    "Event",
+    "Expr",
+    "Model",
+    "Parameter",
+    "Reaction",
+    "Stoichiometry",
+    "Variable",
+]
 
 if TYPE_CHECKING:
     import sympy
@@ -22,6 +30,23 @@ def _md_eq(s: Expr) -> str:
 
 type Expr = sympy.Symbol | sympy.Float | sympy.Expr
 type Stoichiometry = dict[str, Expr]
+
+
+@dataclass(kw_only=True, slots=True)
+class Event:
+    """A transformed SBML event with sympy trigger and assignment expressions."""
+
+    trigger: sympy.Expr | None
+    assignments: dict[str, sympy.Expr]
+    initial_value: bool
+    persistent: bool
+    delay: sympy.Expr | None
+    priority: sympy.Expr | None
+    use_values_from_trigger_time: bool
+
+    def __repr__(self) -> str:
+        """Return formatted string representation."""
+        return wl.pformat(self)
 
 
 @dataclass(kw_only=True, slots=True)
@@ -72,6 +97,7 @@ class Model:
     derived: dict[str, Expr] = field(default_factory=dict)
     reactions: dict[str, Reaction] = field(default_factory=dict)
     initial_assignments: dict[str, Expr] = field(default_factory=dict)
+    events: dict[str, Event] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         """Return formatted string representation."""
