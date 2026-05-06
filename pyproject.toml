@@ -13,6 +13,7 @@ dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.15.11",
     "ssort>=0.14.0",
     "toml>=0.10.2",
@@ -25,10 +26,7 @@ dev = [
 
 [project]
 authors = [{ name = "Marvin van Aalst", email = "marvin.vanaalst@gmail.com" }]
-dependencies = [
-    "python-libsbml>=5.20.4",
-    "sympy>=1.14.0",
-]
+dependencies = ["python-libsbml>=5.20.4", "sympy>=1.14.0"]
 description = "Add your description here"
 license = "MIT"
 maintainers = [
@@ -45,22 +43,14 @@ include = ["pysbml"]
 
 [tool.pyright]
 deprecateTypingAliases = true
-exclude = [
-    "**/__pycache__",
-    "tmp",
-    "tests/assets",
-]
-include = [
-    "docs",
-    'publication-figures',
-    "src",
-    "tests",
-]
+exclude = ["**/__pycache__", "tmp", "tests/assets"]
+include = ["docs", 'publication-figures', "src", "tests"]
 pythonVersion = "3.12"
 reportMissingModuleSource = "none"
 strict = []
 
 [tool.ruff]
+exclude = ["tests/assets"]
 indent-width = 4
 line-length = 88
 
@@ -111,12 +101,7 @@ select = ["ALL"]
     "SLF",
     "PD901",   # "df" name
 ]
-"tests/assets/*" = [
-    "ARG001",
-    "INP001",
-    "N816",
-    "F841",
-]
+"tests/assets/*" = ["ARG001", "INP001", "N816", "F841"]
 "tmp/*" = [
     "I001", # unsorted imports
     "S101", # assert

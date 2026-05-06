@@ -43,5 +43,19 @@
     },
     "terminal.integrated.env.osx": {
         "UV_PROJECT_ENVIRONMENT": "${workspaceFolder}/.venv"
+    },
+    "chat.tools.terminal.autoApprove": {
+        "/^uv run pytest tests/ --tb=short 2>&1 \\| tail -80$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^uv run pytest tests/ --tb=short --timeout=10 -x 2>&1 \\| head -60$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^uv run pytest tests/test_import\\.py --tb=short -v 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
