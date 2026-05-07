@@ -7,12 +7,21 @@ from queue import Empty, SimpleQueue
 from typing import TYPE_CHECKING, cast
 
 import sympy
-from sympy.printing.pycode import pycode
+from sympy.printing.pycode import PythonCodePrinter, pycode
 
 if TYPE_CHECKING:
     from pysbml.transform import data as tdata
 
 INDENT = "    "
+
+
+class _SBMLPrinter(PythonCodePrinter):
+    def _print_acot(self, expr: sympy.Expr) -> str:
+        arg = self._print(expr.args[0])
+        return f"(math.atan2(math.copysign(1.0, ({arg})), abs(({arg}))))"
+
+
+_printer = _SBMLPrinter({"fully_qualified_modules": True})
 
 
 @dataclass
@@ -87,9 +96,7 @@ def free_symbols(expr: sympy.Expr) -> list[str]:
 
 def codegen_expr(expr: sympy.Expr) -> str:
     """Generate Python source for a sympy expression."""
-    return cast(str, pycode(expr, fully_qualified_modules=True)).replace(
-        "math.factorial", "scipy.special.factorial"
-    )
+    return _printer.doprint(expr).replace("math.factorial", "scipy.special.factorial")
 
 
 def codegen_value(val: sympy.Float) -> str:

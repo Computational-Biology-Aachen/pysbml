@@ -399,6 +399,10 @@ def parse_reactions(model: Model, sbml_model: libsbml.Model) -> None:
     """Parse reactions from the libsbml model into model.reactions."""
     for reaction in sbml_model.getListOfReactions():
         name = name_to_py(reaction.getId())
+
+        if reaction.getFast():
+            raise NotImplementedError("fast reactions not supported")
+
         kinetic_law = reaction.getKineticLaw()
 
         if kinetic_law is None:

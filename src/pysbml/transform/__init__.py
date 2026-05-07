@@ -95,6 +95,10 @@ class Ctx:
 
     rxns_by_var: defaultdict[str, set[str]]
     ass_rules_by_var: defaultdict[str, set[str]]
+    rxn_had_compartment: dict[str, bool]
+    # Deferred stoichiometry corrections: (rxn_name, species_k, compartment)
+    # Applied after all species are transformed so rxn_had_compartment is final.
+    pending_stoich_corrections: list[tuple[str, str, str]]
 
 
 def _to_sympy_types(
@@ -166,7 +170,15 @@ def variable_is_constant(name: str, pmodel: pdata.Model) -> bool:
     if var.is_constant:
         return True
     if var.has_boundary_condition:
-        return name not in pmodel.rate_rules
+        if name in pmodel.rate_rules:
+            return False
+        # Event assignments can change the species; must not treat as constant
+        if any(
+            any(a.variable == name for a in ev.assignments)
+            for ev in pmodel.events.values()
+        ):
+            return False
+        return True
     return False
 
 
@@ -319,6 +331,11 @@ def convert_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
                 )  # type: ignore
 
         pars_to_replace = {pn: f"{name}_{pn}" for pn in rxn.local_pars}
+        # rateOf(local_param) sentinels also need renaming so substitute_rate_of
+        # resolves them to 0 (local params are always constant).
+        pars_to_replace.update(
+            {f"__rateOf_{pn}__": f"__rateOf_{name}_{pn}__" for pn in rxn.local_pars}
+        )
         fn = expr(fn.subs(pars_to_replace))
         tmodel.reactions[name] = data.Reaction(
             expr=fn,
@@ -397,25 +414,28 @@ def _handle_amount(
         tmodel.initial_assignments[k] = _mul_expr(ar, compartment)
 
     # Fix assignment rules
-    # Nothing to do here :)
+    if k in tmodel.derived:
+        tmodel.derived[k] = _mul_expr(tmodel.derived[k], compartment)
+        tmodel.derived[f"{k}_conc"] = _div_expr(k, compartment)
 
-    # Fix rate rule
+    # Fix rate rule: d(S_amount)/dt = d(S_conc)/dt * C + S_conc * d(C)/dt
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
-        rr.stoichiometry = {k: sympy.Symbol(compartment)}
+        comp_rate_rxn = tmodel.reactions.get(f"d{compartment}")
+        if comp_rate_rxn is not None:
+            conc_sym = sympy.Symbol(k_conc)
+            rr.expr = expr(
+                _mul_expr(rr.expr, compartment)
+                + _mul_expr(conc_sym, comp_rate_rxn.expr)
+            )
+            rr.stoichiometry = {k: sympy.Float(1.0)}
+        else:
+            rr.stoichiometry = {k: sympy.Symbol(compartment)}
 
-    # Fix reactions
+    # Fix reactions (defer stoichiometry correction until all species are processed)
     for rxn_name in ctx.rxns_by_var[k]:
         rxn = tmodel.reactions[rxn_name]
-        rxn.expr = expr(
-            rxn.expr.subs(
-                {
-                    compartment: 1,
-                    k: k_conc,
-                }
-            )
-        )
-        if (s := rxn.stoichiometry.get(k)) is not None:
-            rxn.stoichiometry[k] = _mul_expr(s, compartment)
+        rxn.expr = expr(rxn.expr.subs({compartment: 1, k: k_conc}))
+        ctx.pending_stoich_corrections.append((rxn_name, k, compartment))
 
     # Fix derived (assignment) rules: k appears as concentration in math
     k_sym = sympy.Symbol(k)
@@ -466,6 +486,12 @@ def _handle_amount_boundary(
     if (ar := tmodel.initial_assignments.get(k)) is not None:
         tmodel.initial_assignments[k] = _mul_expr(ar, compartment)
 
+    # Fix assignment rule on the species itself: the rule assigns concentration,
+    # while reported species values are amounts for these fixtures.
+    if k in tmodel.derived:
+        tmodel.derived[k] = _mul_expr(tmodel.derived[k], compartment)
+        tmodel.derived[f"{k}_conc"] = _div_expr(k, compartment)
+
     # Fix derived (assignment) rules: k appears as concentration in math
     k_sym = sympy.Symbol(k)
     k_conc_sym = sympy.Symbol(k_conc)
@@ -477,16 +503,14 @@ def _handle_amount_boundary(
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
         rr.stoichiometry = {k: sympy.Symbol(compartment)}
 
-    # Fix reactions
+    # Fix reactions: substitute boundary species with its concentration symbol.
+    # Any compartment factor in the kinetic law is handled by _handle_amount for
+    # non-boundary species in the same reaction.
+    k_sym_local = sympy.Symbol(k)
+    k_conc_sym_local = sympy.Symbol(k_conc)
     for rxn_name in ctx.rxns_by_var[k]:
         rxn = tmodel.reactions[rxn_name]
-
-        rate = expr(rxn.expr.subs(compartment, 1))
-
-        # FIXME: Test 1122 requires me to divide the concentration by the compartment
-        # to run through. That's certainly false. What the hell is this?
-        rxn.expr = expr(rate.subs(k, _div_expr(k_conc, compartment)))
-
+        rxn.expr = expr(rxn.expr.subs(k_sym_local, k_conc_sym_local))
         # Boundary condition means it cannot be part of the reactions system, so we
         # don't need to worry about the stoichiometry
 
@@ -575,10 +599,11 @@ def _handle_amount_boundary_has_substance_units(
     k_conc = f"{k}_conc"
     tmodel.derived[k_conc] = _div_expr(k, compartment)
 
-    # Fix reactions
+    # Fix reactions: k_conc = k/compartment introduces compartment dependency
     for rxn_name in ctx.rxns_by_var[k]:
         rxn = tmodel.reactions[rxn_name]
         rxn.expr = expr(rxn.expr.subs(k, k_conc))
+        ctx.rxn_had_compartment[rxn_name] = True
 
 
 def _handle_constant_variable(
@@ -608,6 +633,9 @@ def _handle_conc(
     """
     if pmodel.compartments[compartment].is_constant:
         tmodel.variables[k] = data.Variable(value=init, unit=None)
+        tmodel.derived[f"{k}_amount"] = _mul_expr(
+            sympy.Symbol(k), sympy.Symbol(compartment)
+        )
 
         # Fix initial assignment rule
         if (comp := tmodel.initial_assignments.get(compartment)) is not None:
@@ -619,10 +647,11 @@ def _handle_conc(
         # Fix rate rule
         # Nothing to do here :)
 
-        # Fix reactions
+        # Fix reactions: d(conc)/dt = stoich * v / V, so normalize stoich by compartment
         for rxn_name in ctx.rxns_by_var[k]:
             rxn = tmodel.reactions[rxn_name]
-            rxn.expr = expr(rxn.expr.subs(compartment, 1))
+            if k in rxn.stoichiometry:
+                rxn.stoichiometry[k] = _div_expr(rxn.stoichiometry[k], compartment)
     else:
         tmodel.variables[k_amount := f"{k}_amount"] = data.Variable(
             value=init, unit=None
@@ -757,9 +786,16 @@ def _handle_conc_boundary_has_substance_units(
     # Fix initial assignment rule
     # Nothing to do here :)
 
-    # Fix assignment rules
+    # Fix assignment rules (only those without rateOf sentinels — rateOf already in
+    # amount/time units and must not be scaled by compartment)
     for dname in ctx.ass_rules_by_var[k]:
-        tmodel.derived[dname] = _mul_expr(tmodel.derived[dname], compartment)
+        rule_expr = tmodel.derived[dname]
+        has_rate_of = any(
+            isinstance(s, sympy.Symbol) and s.name.startswith("__rateOf_")
+            for s in rule_expr.free_symbols
+        )
+        if not has_rate_of:
+            tmodel.derived[dname] = _mul_expr(rule_expr, compartment)
 
     # Fix rate rule
     # Nothing to do here :)
@@ -942,6 +978,14 @@ def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None
     for k, var in pmodel.variables.items():
         _transform_species(k, var, pmodel, tmodel, ctx=ctx)
 
+    # Apply deferred stoichiometry corrections: multiply by compartment only when the
+    # (final, fully-transformed) kinetic law has a concentration/time dependency.
+    for rxn_name, species_k, compartment in ctx.pending_stoich_corrections:
+        if ctx.rxn_had_compartment.get(rxn_name, False):
+            rxn = tmodel.reactions.get(rxn_name)
+            if rxn is not None and (s := rxn.stoichiometry.get(species_k)) is not None:
+                rxn.stoichiometry[species_k] = _mul_expr(s, compartment)
+
 
 def _find_algebraic_floating_var(
     body_expr: sympy.Expr,
@@ -1064,10 +1108,34 @@ def substitute_rate_of(tmodel: data.Model) -> None:
         if name not in rate_exprs:
             rate_exprs[name] = sympy.Float(0.0)
 
-    subs_dict = {
-        sympy.Symbol(f"__rateOf_{var}__"): rate_expr
-        for var, rate_expr in rate_exprs.items()
-    }
+    # Build rateOf substitution dict.
+    # rateOf(S) should give the rate-of-change of S as it appears in math expressions:
+    # - amount-tracked (S in variables, S_conc in derived): rateOf = amount_rate / C
+    # - conc-tracked boundary (S in derived, S_conc in variables): rateOf = rate_of_S_conc
+    # - direct tracking: rateOf = rate_expr
+    subs_dict = {}
+    for var, rate_expr in rate_exprs.items():
+        conc_name = f"{var}_conc"
+        if conc_name in tmodel.derived:
+            conc_expr = tmodel.derived[conc_name]
+            var_sym = sympy.Symbol(var)
+            compartment_sym = sympy.cancel(var_sym / conc_expr)
+            compartment_str = str(compartment_sym)
+            dC_rate = rate_exprs.get(compartment_str, sympy.Float(0.0))
+            conc_sym = sympy.Symbol(conc_name)
+            # d(S_conc)/dt = rate_amount/C - S_conc/C * dC_rate
+            subs_dict[sympy.Symbol(f"__rateOf_{var}__")] = expr(
+                rate_expr / compartment_sym - conc_sym / compartment_sym * dC_rate
+            )
+        else:
+            subs_dict[sympy.Symbol(f"__rateOf_{var}__")] = rate_expr
+
+    # Conc-boundary species: S is in derived (S = S_conc * C), rateOf(S) = rate_of_S_conc
+    for var in tmodel.derived:
+        conc_name = f"{var}_conc"
+        sentinel = sympy.Symbol(f"__rateOf_{var}__")
+        if conc_name in rate_exprs and sentinel not in subs_dict:
+            subs_dict[sentinel] = rate_exprs[conc_name]
 
     # Any remaining __rateOf_*__ sentinels (e.g. local params) → rate = 0
     def _collect_all_exprs() -> list[sympy.Expr]:
@@ -1136,11 +1204,21 @@ def substitute_delays(tmodel: data.Model) -> None:
 
     def resolve(target_expr: sympy.Expr, delay_amt: sympy.Expr) -> sympy.Expr:
         if not isinstance(target_expr, sympy.Symbol):
-            return target_expr
+            raise NotImplementedError("delay() on complex expressions not supported")
         name = target_expr.name
 
         if name in tmodel.derived:
-            return expr(tmodel.derived[name].subs(time_sym, time_sym - delay_amt))
+            orig = tmodel.derived[name]
+            substituted = expr(orig.subs(time_sym, time_sym - delay_amt))
+            if substituted == orig:
+                dyn_in_expr = {
+                    s.name for s in orig.free_symbols if isinstance(s, sympy.Symbol)
+                } & has_dynamics
+                if dyn_in_expr:
+                    raise NotImplementedError(
+                        f"delay({name}) on dynamic variable expression not supported (DDE)"
+                    )
+            return substituted
 
         if name in tmodel.initial_assignments and name not in has_dynamics:
             history = expr(
@@ -1150,7 +1228,12 @@ def substitute_delays(tmodel: data.Model) -> None:
                 sympy.Piecewise((history, time_sym < delay_amt), (target_expr, True))
             )
 
-        return target_expr
+        if name in tmodel.parameters:
+            return target_expr
+
+        raise NotImplementedError(
+            f"delay({name}) for dynamic variable not supported (DDE)"
+        )
 
     def _sub(e: sympy.Expr) -> sympy.Expr:
         if e.has(SBMLDelay):
@@ -1177,7 +1260,12 @@ def transform(doc: pdata.Document) -> data.Model:
     """Transform a parsed SBML document into a simplified sympy-based model."""
     pmodel = doc.model
 
-    ctx = Ctx(rxns_by_var=defaultdict(set), ass_rules_by_var=defaultdict(set))
+    ctx = Ctx(
+        rxns_by_var=defaultdict(set),
+        ass_rules_by_var=defaultdict(set),
+        rxn_had_compartment={},
+        pending_stoich_corrections=[],
+    )
     for name, rxn in pmodel.reactions.items():
         for arg in rxn.args:
             ctx.rxns_by_var[arg.name].add(name)
@@ -1197,6 +1285,15 @@ def transform(doc: pdata.Document) -> data.Model:
     convert_events(pmodel=pmodel, tmodel=tmodel)
     convert_rules_and_initial_assignments(pmodel=pmodel, tmodel=tmodel)
     convert_reactions(pmodel=pmodel, tmodel=tmodel)
+
+    # Pre-compute: for each reaction, whether any compartment symbol was in the
+    # original kinetic law. Used by _handle_amount to decide if stoichiometry
+    # needs compensating C factor (L2-style) or not (L3-style).
+    compartment_syms = {sympy.Symbol(c) for c in pmodel.compartments}
+    for rxn_name, rxn in tmodel.reactions.items():
+        ctx.rxn_had_compartment[rxn_name] = bool(
+            rxn.expr.free_symbols & compartment_syms
+        )
 
     # Do the heavy lifting here
     transform_species(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
