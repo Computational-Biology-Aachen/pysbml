@@ -98,6 +98,7 @@ class Model:
     reactions: dict[str, Reaction] = field(default_factory=dict)
     initial_assignments: dict[str, Expr] = field(default_factory=dict)
     events: dict[str, Event] = field(default_factory=dict)
+    substance_units_vars: frozenset[str] = field(default_factory=frozenset)
 
     def __repr__(self) -> str:
         """Return formatted string representation."""

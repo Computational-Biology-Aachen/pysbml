@@ -418,20 +418,20 @@ _SKIP: dict[int, str] = {
     744: "stiff ODE timeout",
     885: "stiff ODE timeout",
     966: "stiff ODE timeout",
-    # --- Non-constant compartment + amount/conc duality not yet fully supported ---
-    # These models mix hasOnlySubstanceUnits=False species with dynamically changing
-    # compartments in ways our transform does not yet handle correctly.
-    934: "non-constant compartment amount/conc not supported",
-    999: "non-constant compartment amount/conc not supported",
-    1000: "non-constant compartment amount/conc not supported",
-    1121: "non-constant compartment amount/conc not supported",
-    1208: "non-constant compartment amount/conc not supported",
-    1307: "non-constant compartment amount/conc not supported",
-    1308: "non-constant compartment amount/conc not supported",
-    1505: "non-constant compartment amount/conc not supported",
-    1511: "non-constant compartment amount/conc not supported",
-    1513: "non-constant compartment amount/conc not supported",
-    1514: "non-constant compartment amount/conc not supported",
+    # --- Event priority re-evaluation not supported ---
+    # SBML requires dynamic priority re-evaluation after each event fires within a
+    # simultaneous batch.  Our simulator enqueues priorities once; 934 requires
+    # re-sorting the queue after each assignment.
+    934: "dynamic event priority re-evaluation not supported",
+    # --- Complex multi-compartment models with unsupported patterns ---
+    999: "complex multi-compartment model: unsupported pattern",
+    1000: "complex multi-compartment model: unsupported pattern",
+    1121: "complex multi-compartment model: unsupported pattern",
+    # --- Narrow-range AND trigger not detectable by scipy event detection ---
+    # The trigger (0.18 < S1_conc < 0.19) spans a range narrower than the adaptive
+    # integrator step; scipy sees the same sign at both endpoints of the step and
+    # misses the zero-crossing.
+    1511: "narrow-range AND trigger missed by scipy adaptive step",
     # --- Event simulation timeout ---
     # Event trigger/assignment logic for these models produces an infinite loop in the
     # simulator.  The codegen itself is likely fine; needs work in _simulate_events.
