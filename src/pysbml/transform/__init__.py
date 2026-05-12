@@ -498,9 +498,18 @@ def _handle_amount_boundary(
         if dname != k:
             tmodel.derived[dname] = expr(tmodel.derived[dname].subs(k_sym, k_conc_sym))
 
-    # Fix rate rule
+    # Fix rate rule: d(S_amount)/dt = d(S_conc)/dt * C + S_conc * d(C)/dt
     if (rr := tmodel.reactions.get(f"d{k}")) is not None:
-        rr.stoichiometry = {k: sympy.Symbol(compartment)}
+        rr.expr = expr(rr.expr.subs(k_sym, k_conc_sym))
+        comp_rate_rxn = tmodel.reactions.get(f"d{compartment}")
+        if comp_rate_rxn is not None:
+            rr.expr = expr(
+                _mul_expr(rr.expr, compartment)
+                + _mul_expr(k_conc_sym, comp_rate_rxn.expr)
+            )
+            rr.stoichiometry = {k: sympy.Float(1.0)}
+        else:
+            rr.stoichiometry = {k: sympy.Symbol(compartment)}
 
     # Fix reactions: substitute boundary species with its concentration symbol.
     # Any compartment factor in the kinetic law is handled by _handle_amount for
@@ -530,6 +539,7 @@ def _handle_amount_boundary(
 
 def _handle_amount_has_substance_units(
     k: str,
+    compartment: str,
     init: sympy.Float,
     tmodel: data.Model,
 ) -> None:
@@ -546,6 +556,8 @@ def _handle_amount_has_substance_units(
 
     """
     tmodel.variables[k] = data.Variable(value=init, unit=None)
+    tmodel.derived[f"{k}_conc"] = _div_expr(k, compartment)
+    tmodel.substance_units_vars = tmodel.substance_units_vars | frozenset([k])
 
     # Fix initial assignment
     # Nothing to do here :)
@@ -731,6 +743,11 @@ def _handle_conc_boundary(
                 new_assignments[k_conc] = new_expr
             else:
                 new_assignments[var] = new_expr
+        # If compartment is assigned but species is not, conserve amount:
+        # S_conc_new = S_conc_old * C_old / C_new
+        if compartment in new_assignments and k_conc not in new_assignments:
+            comp_new = new_assignments[compartment]
+            new_assignments[k_conc] = expr(k_conc_sym * comp_sym / comp_new)
         ev.assignments = new_assignments
 
 
@@ -861,6 +878,7 @@ def _transform_species(
                 LOGGER.debug("Species %s amount | True | False", k)
                 _handle_amount_has_substance_units(
                     k=k,
+                    compartment=compartment,
                     init=init,
                     tmodel=tmodel,
                 )
@@ -1445,10 +1463,12 @@ def substitute_rate_of(tmodel: data.Model) -> None:
     # - amount-tracked (S in variables, S_conc in derived): rateOf = amount_rate / C
     # - conc-tracked boundary (S in derived, S_conc in variables): rateOf = rate_of_S_conc
     # - direct tracking: rateOf = rate_expr
+    # hasOnlySubstanceUnits=True vars are excluded from the concentration-rate formula
+    # because their identifier already means amount in all expressions.
     subs_dict = {}
     for var, rate_expr in rate_exprs.items():
         conc_name = f"{var}_conc"
-        if conc_name in tmodel.derived:
+        if conc_name in tmodel.derived and var not in tmodel.substance_units_vars:
             conc_expr = tmodel.derived[conc_name]
             var_sym = sympy.Symbol(var)
             compartment_sym = sympy.cancel(var_sym / conc_expr)
