@@ -138,9 +138,9 @@ def _handle_node(
                 _handle_node(right, fns, as_number=True),
             )
         case mathml.Implies(left, right):
-            l = _handle_node(left, fns, as_bool=True)
-            r = _handle_node(right, fns, as_bool=True)
-            return sympy.Or(sympy.Not(l), r)
+            left = _handle_node(left, fns, as_bool=True)
+            right = _handle_node(right, fns, as_bool=True)
+            return sympy.Or(sympy.Not(left), right)
         # n-ary
         case mathml.Function(name, children):
             fn = fns[name]

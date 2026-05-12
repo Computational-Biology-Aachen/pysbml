@@ -111,7 +111,7 @@ for folder in sorted((Path(__file__).parent / "assets").iterdir()):
         code = codegen(transform(doc))
         with f.open("w+") as fp:
             fp.write(start.format(prefix=test, model=code))
-    except Exception:
+    except Exception:  # noqa: BLE001 ; fine in tests
         with f.open("w+") as fp:
             fp.write(start.format(prefix=test, model="# FIXME: implement"))
 

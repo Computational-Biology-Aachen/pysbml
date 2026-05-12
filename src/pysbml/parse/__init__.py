@@ -5,13 +5,15 @@ from __future__ import annotations
 import contextlib
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import libsbml
 
 from . import data, l1
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from .data import Model
 
 __all__ = [
@@ -42,7 +44,7 @@ def parse(
 
 
 @contextlib.contextmanager
-def _provide_external_models(file: Path):
+def _provide_external_models(file: Path) -> Generator[None, Any, None]:
     """Create symlinks for external comp model files if needed.
 
     Some SBML files reference external models by a bare name (e.g. enzyme_model.xml)
@@ -88,8 +90,8 @@ def load_document(file: str | Path) -> data.Document:
         plugin_names = {doc.getPlugin(i).package_name for i in range(doc.num_plugins)}
         if "comp" in plugin_names:
             props = libsbml.ConversionProperties()
-            props.addOption("flatten comp", True)
-            props.addOption("leave_ports_intact", False)
+            props.addOption("flatten comp", True)  # noqa: FBT003 ; no control over api
+            props.addOption("leave_ports_intact", False)  # noqa: FBT003 ; no control over api
             doc.convert(props)
 
     version = cast(int, doc.version)

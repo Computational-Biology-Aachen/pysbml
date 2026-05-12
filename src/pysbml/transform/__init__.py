@@ -65,6 +65,7 @@ Source: https://sbml.org/software/libsbml/5.18.0/docs/formatted/python-api/class
 import dataclasses
 import logging
 import math
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import reduce
@@ -173,12 +174,10 @@ def variable_is_constant(name: str, pmodel: pdata.Model) -> bool:
         if name in pmodel.rate_rules:
             return False
         # Event assignments can change the species; must not treat as constant
-        if any(
+        return not any(
             any(a.variable == name for a in ev.assignments)
             for ev in pmodel.events.values()
-        ):
-            return False
-        return True
+        )
     return False
 
 
@@ -1078,6 +1077,339 @@ def convert_algebraic_rules(pmodel: pdata.Model, tmodel: data.Model) -> None:
         tmodel.parameters.pop(floating_var, None)
 
 
+def convert_fast_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
+    """Apply QSS reduction: species exclusively in fast reactions become derived."""
+    fast_rxn_names = {name for name, rxn in pmodel.reactions.items() if rxn.fast}
+    if not fast_rxn_names:
+        return
+
+    init_param_subs: dict[sympy.Symbol, sympy.Float] = {
+        sympy.Symbol(n): sympy.Float(p.value) for n, p in pmodel.parameters.items()
+    }
+    for n, c in pmodel.compartments.items():
+        init_param_subs[sympy.Symbol(n)] = sympy.Float(c.size)
+
+    qss_species: set[str] = set()
+    # Deferred: species whose fast reaction is inactive at t=0 (parameter-gated).
+    # Value: (net_flux expr, QSS solution expr) for event assignment generation.
+    deferred_qss: dict[str, tuple[sympy.Expr, sympy.Expr]] = {}
+
+    for species in list(tmodel.variables):
+        participating = {
+            name
+            for name, rxn in pmodel.reactions.items()
+            if species in rxn.stoichiometry
+        }
+        if not participating or not participating.issubset(fast_rxn_names):
+            continue
+
+        net_flux: sympy.Expr = sympy.Float(0.0)
+        for rxn in tmodel.reactions.values():
+            s = rxn.stoichiometry.get(species)
+            if s is not None:
+                net_flux = sympy.Add(net_flux, _mul_expr(s, rxn.expr))
+
+        species_conc = f"{species}_conc"
+        has_conc = species_conc in tmodel.derived
+        solve_sym = sympy.Symbol(species_conc if has_conc else species)
+        if has_conc:
+            net_flux = net_flux.subs(sympy.Symbol(species), solve_sym)
+
+        solutions = sympy.solve(net_flux, solve_sym)
+        if not solutions:
+            msg = f"QSS: cannot solve algebraically for {species}"
+            raise NotImplementedError(msg)
+        if len(solutions) > 1:
+            warnings.warn(
+                f"Multiple QSS solutions for {species}; using first", stacklevel=2
+            )
+
+        solution = cast(sympy.Expr, solutions[0])
+
+        # Piecewise kinetics may produce a solution with NaN branches (sympy
+        # solves one branch but not the other). Conservation-law-based QSS
+        # is needed for these, which we don't support yet.
+        if solution.has(sympy.S.NaN):
+            msg = f"QSS: piecewise solution with nan branch for {species}"
+            raise NotImplementedError(msg)
+
+        # If the fast flux is identically zero at t=0 (e.g. a rate parameter starts
+        # at 0 and is set by an event), QSS is not valid from t=0. Keep the species
+        # as a state variable and handle equilibration via event assignments instead.
+        try:
+            is_deferred = bool(net_flux.subs(init_param_subs).is_zero)
+        except (TypeError, ValueError):
+            is_deferred = False
+        if is_deferred:
+            deferred_qss[species] = (net_flux, solution)
+            continue
+
+        if has_conc:
+            compartment = cast(str, pmodel.variables[species].compartment)
+            tmodel.derived[species_conc] = solution
+            tmodel.derived[species] = _mul_expr(solution, compartment)
+        else:
+            tmodel.derived[species] = solution
+        del tmodel.variables[species]
+        qss_species.add(species)
+
+    if qss_species:
+        _apply_qss_corrections(pmodel, tmodel, fast_rxn_names, qss_species)
+
+    if deferred_qss:
+        _apply_deferred_qss_events(pmodel, tmodel, fast_rxn_names, deferred_qss)
+
+
+def _apply_qss_corrections(
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    fast_rxn_names: set[str],
+    qss_species: set[str],
+) -> None:
+    """Correct ODE stoichiometries and initial conditions after QSS reduction.
+
+    For non-QSS species S_j in the fast subsystem, the effective stoichiometry
+    in each reaction R is T_R / (dT/dS_j), where T_R = c^T * stoich_R and
+    dT/dS_j = c_j + sum_{k in QSS} c_k * d(k_amount)/d(S_j), with c the
+    conservation vector from null(N_fast^T).
+    """
+    fast_species_all: set[str] = set()
+    for rn in fast_rxn_names:
+        fast_species_all.update(pmodel.reactions[rn].stoichiometry.keys())
+
+    non_qss_in_fast = fast_species_all & set(tmodel.variables)
+    fast_sp_list = sorted(fast_species_all)
+    fast_rxn_list = sorted(fast_rxn_names)
+
+    # Build stoichiometry matrix for fast reactions (amounts, from pmodel)
+    N_rows = []
+    for sp in fast_sp_list:
+        row = []
+        for rn in fast_rxn_list:
+            st = pmodel.reactions[rn].stoichiometry.get(sp, 0.0)
+            if isinstance(st, list):
+                st = sum(s[0] for s in st)
+            row.append(float(st))
+        N_rows.append(row)
+    N_mat = sympy.Matrix(N_rows)
+    conservation_vecs = N_mat.T.nullspace()
+
+    if conservation_vecs and non_qss_in_fast:
+        c_vec = conservation_vecs[0]
+        c_map = {fast_sp_list[i]: float(c_vec[i]) for i in range(len(fast_sp_list))}
+
+        # Substitution: _conc symbols → amount/comp, for differentiating QSS exprs
+        conc_to_amount: dict[sympy.Symbol, sympy.Expr] = {}
+        for sp in non_qss_in_fast:
+            v = pmodel.variables.get(sp)
+            if v is not None and v.compartment:
+                comp_sym = sympy.Symbol(v.compartment)
+                conc_to_amount[sympy.Symbol(f"{sp}_conc")] = sympy.Symbol(sp) / comp_sym
+
+        # QSS amount expressions in amount-space (for differentiation)
+        qss_amount_exprs: dict[str, sympy.Expr] = {}
+        for sp_k in qss_species:
+            qss_amount_exprs[sp_k] = cast(
+                sympy.Expr, tmodel.derived[sp_k].subs(conc_to_amount)
+            )
+
+        # dT/dS_j for each non-QSS species
+        dt_ds: dict[str, sympy.Expr] = {}
+        for sp_j in non_qss_in_fast:
+            sym_j = sympy.Symbol(sp_j)
+            val: sympy.Expr = sympy.Float(c_map[sp_j])
+            for sp_k in qss_species:
+                c_k = c_map.get(sp_k, 0.0)
+                if c_k != 0.0:
+                    val = cast(
+                        sympy.Expr,
+                        val + c_k * sympy.diff(qss_amount_exprs[sp_k], sym_j),
+                    )
+            dt_ds[sp_j] = val
+
+        # Compute corrected stoichiometries (before removing QSS species)
+        corrections: dict[str, dict[str, sympy.Expr]] = {}
+        for rn, rxn in tmodel.reactions.items():
+            corr: dict[str, sympy.Expr] = {}
+            for sp_j in non_qss_in_fast:
+                t_r: sympy.Expr = sympy.Float(0.0)
+                for sp_k in fast_sp_list:
+                    c_k = c_map.get(sp_k, 0.0)
+                    if c_k == 0.0:
+                        continue
+                    st = rxn.stoichiometry.get(sp_k)
+                    if st is None or isinstance(st, list):
+                        continue
+                    st_e = st if isinstance(st, sympy.Expr) else sympy.Float(float(st))
+                    t_r = cast(sympy.Expr, t_r + c_k * st_e)
+                denom = dt_ds[sp_j]
+                eff = (
+                    sympy.cancel(t_r / denom) if not denom.is_zero else sympy.Float(0.0)
+                )
+                corr[sp_j] = eff
+            corrections[rn] = corr
+
+        # Apply corrected stoichiometries
+        for rn, rxn in tmodel.reactions.items():
+            for sp_j, eff in corrections[rn].items():
+                if eff.is_zero:
+                    rxn.stoichiometry.pop(sp_j, None)
+                else:
+                    rxn.stoichiometry[sp_j] = eff
+
+    # Remove QSS species from all reaction stoichiometries
+    for rxn in tmodel.reactions.values():
+        for sp in qss_species:
+            rxn.stoichiometry.pop(sp, None)
+
+    if not non_qss_in_fast or not conservation_vecs:
+        return
+
+    # Fix initial conditions: project non-QSS species onto QSS manifold at t=0
+    def init_amount(sp: str) -> float:
+        v = pmodel.variables.get(sp)
+        if v is None:
+            return 0.0
+        if v.initial_amount:
+            return float(v.initial_amount)
+        comp = v.compartment
+        sz = (
+            pmodel.compartments[comp].size
+            if comp and comp in pmodel.compartments
+            else 1.0
+        )
+        return float(v.initial_concentration or 0.0) * sz
+
+    sym_map = {sp: sympy.Symbol(sp) for sp in fast_sp_list}
+
+    conservation_eqs = []
+    for c_vec in conservation_vecs:
+        total = sympy.Float(
+            sum(
+                float(c_vec[i]) * init_amount(fast_sp_list[i])
+                for i in range(len(fast_sp_list))
+            )
+        )
+        lhs = sum(c_vec[i] * sym_map[fast_sp_list[i]] for i in range(len(fast_sp_list)))
+        conservation_eqs.append(sympy.Eq(lhs, total))
+
+    qss_eqs = []
+    for sp in qss_species:
+        if sp not in fast_species_all:
+            continue
+        qss_expr_raw = tmodel.derived[sp]
+        subs: dict[sympy.Symbol, sympy.Expr] = {}
+        for other_sp in fast_species_all:
+            v = pmodel.variables.get(other_sp)
+            if v is None:
+                continue
+            comp = v.compartment
+            sz = sympy.Float(
+                pmodel.compartments[comp].size
+                if comp and comp in pmodel.compartments
+                else 1.0
+            )
+            subs[sympy.Symbol(f"{other_sp}_conc")] = sym_map[other_sp] / sz
+            if comp:
+                subs[sympy.Symbol(comp)] = sz
+        qss_eqs.append(sympy.Eq(sym_map[sp], expr(qss_expr_raw.subs(subs))))
+
+    all_sym_list = [sym_map[sp] for sp in fast_sp_list]
+    solutions = sympy.solve(conservation_eqs + qss_eqs, all_sym_list)
+    if not solutions:
+        return
+
+    for sp in sorted(non_qss_in_fast):
+        sol_expr = solutions.get(sym_map[sp])
+        if sol_expr is not None and sp in tmodel.variables:
+            tmodel.initial_assignments[sp] = expr(sol_expr)
+
+
+def _apply_deferred_qss_events(
+    pmodel: pdata.Model,
+    tmodel: data.Model,
+    fast_rxn_names: set[str],
+    deferred_qss: dict[str, tuple[sympy.Expr, sympy.Expr]],
+) -> None:
+    """Add event assignments for fast species whose QSS is inactive at t=0.
+
+    When a fast reaction's rate is zero at t=0 (e.g. parameter starts at 0),
+    the species cannot be derived from t=0. Instead, when an event activates
+    the rate, we inject event assignments that:
+      - set the QSS species to its equilibrium value (e.g. 0)
+      - update conserved non-QSS species by the displaced mass
+    """
+    fast_species_all: set[str] = set()
+    for rn in fast_rxn_names:
+        fast_species_all.update(pmodel.reactions[rn].stoichiometry.keys())
+
+    fast_sp_list = sorted(fast_species_all)
+    fast_rxn_list = sorted(fast_rxn_names)
+
+    N_rows = []
+    for sp in fast_sp_list:
+        row = []
+        for rn in fast_rxn_list:
+            st = pmodel.reactions[rn].stoichiometry.get(sp, 0.0)
+            if isinstance(st, list):
+                st = sum(s[0] for s in st)
+            row.append(float(st))
+        N_rows.append(row)
+    N_mat = sympy.Matrix(N_rows)
+    conservation_vecs = N_mat.T.nullspace()
+
+    c_map: dict[str, float] = {}
+    if conservation_vecs:
+        c_vec = conservation_vecs[0]
+        c_map = {fast_sp_list[i]: float(c_vec[i]) for i in range(len(fast_sp_list))}
+
+    non_qss_in_fast = fast_species_all & set(tmodel.variables) - set(deferred_qss)
+
+    for species, (net_flux, solution) in deferred_qss.items():
+        flux_params = net_flux.free_symbols & {
+            sympy.Symbol(n) for n in pmodel.parameters
+        }
+        for event in tmodel.events.values():
+            if not any(str(p) in event.assignments for p in flux_params):
+                continue
+            # Only inject QSS assignment when the event ACTIVATES the fast reaction.
+            # If the new parameter value makes net_flux structurally zero, this
+            # event deactivates the reaction — don't force the QSS value.
+            new_param_subs: dict[sympy.Symbol, sympy.Expr] = {
+                p: cast(sympy.Expr, event.assignments[str(p)])
+                for p in flux_params
+                if str(p) in event.assignments
+            }
+            try:
+                activates = not bool(net_flux.subs(new_param_subs).is_zero)
+            except (TypeError, ValueError):
+                activates = True
+            if not activates:
+                continue
+            event.assignments[species] = cast(sympy.Expr, solution)
+            c_k = c_map.get(species, 0.0)
+            if c_k == 0.0:
+                continue
+            for sp_j in sorted(non_qss_in_fast):
+                c_j = c_map.get(sp_j, 0.0)
+                if c_j == 0.0:
+                    continue
+                # sp_j_new = sp_j_old + (c_k/c_j) * (species_old - solution)
+                # species_old is Symbol(species), evaluated pre-assignment
+                mass_transfer = cast(
+                    sympy.Expr,
+                    sympy.Rational(round(c_k), round(c_j))
+                    * (sympy.Symbol(species) - solution),
+                )
+                existing = cast(
+                    sympy.Expr,
+                    event.assignments.get(sp_j, sympy.Symbol(sp_j)),
+                )
+                event.assignments[sp_j] = cast(
+                    sympy.Expr, sympy.Add(existing, mass_transfer)
+                )
+
+
 def apply_conversion_factors(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None:
     """Multiply reaction stoichiometries by per-species conversion factors."""
     model_cf = pmodel.conversion_factor
@@ -1141,11 +1473,11 @@ def substitute_rate_of(tmodel: data.Model) -> None:
     def _collect_all_exprs() -> list[sympy.Expr]:
         result: list[sympy.Expr] = []
         for rxn in tmodel.reactions.values():
-            result.append(rxn.expr)
+            result.append(rxn.expr)  # noqa: PERF401
         for e in tmodel.derived.values():
-            result.append(e)
+            result.append(e)  # noqa: PERF402  # noqa: PERF402
         for e in tmodel.initial_assignments.values():
-            result.append(e)
+            result.append(e)  # noqa: PERF402
         for ev in tmodel.events.values():
             if ev.trigger is not None:
                 result.append(ev.trigger)
@@ -1204,7 +1536,8 @@ def substitute_delays(tmodel: data.Model) -> None:
 
     def resolve(target_expr: sympy.Expr, delay_amt: sympy.Expr) -> sympy.Expr:
         if not isinstance(target_expr, sympy.Symbol):
-            raise NotImplementedError("delay() on complex expressions not supported")
+            msg = "delay() on complex expressions not supported"
+            raise NotImplementedError(msg)
         name = target_expr.name
 
         if name in tmodel.derived:
@@ -1215,9 +1548,8 @@ def substitute_delays(tmodel: data.Model) -> None:
                     s.name for s in orig.free_symbols if isinstance(s, sympy.Symbol)
                 } & has_dynamics
                 if dyn_in_expr:
-                    raise NotImplementedError(
-                        f"delay({name}) on dynamic variable expression not supported (DDE)"
-                    )
+                    msg = f"delay({name}) on dynamic variable expression not supported (DDE)"
+                    raise NotImplementedError(msg)
             return substituted
 
         if name in tmodel.initial_assignments and name not in has_dynamics:
@@ -1231,9 +1563,8 @@ def substitute_delays(tmodel: data.Model) -> None:
         if name in tmodel.parameters:
             return target_expr
 
-        raise NotImplementedError(
-            f"delay({name}) for dynamic variable not supported (DDE)"
-        )
+        msg = f"delay({name}) for dynamic variable not supported (DDE)"
+        raise NotImplementedError(msg)
 
     def _sub(e: sympy.Expr) -> sympy.Expr:
         if e.has(SBMLDelay):
@@ -1300,6 +1631,7 @@ def transform(doc: pdata.Document) -> data.Model:
     apply_conversion_factors(pmodel=pmodel, tmodel=tmodel, ctx=ctx)
     remove_duplicate_entries(tmodel=tmodel)
     convert_algebraic_rules(pmodel=pmodel, tmodel=tmodel)
+    convert_fast_reactions(pmodel=pmodel, tmodel=tmodel)
     substitute_rate_of(tmodel=tmodel)
     substitute_delays(tmodel=tmodel)
 

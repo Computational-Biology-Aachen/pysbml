@@ -60,8 +60,11 @@ y0 = [S1, S2]
 variable_names = ["S1", "S2"]
 
 
-def model(time: float, variables: Iterable[float]) -> Iterable[float]:
-    S1, S2 = variables
+def model(
+    time: float,  # noqa: ARG001 ; API stability
+    variables: Iterable[float],
+) -> Iterable[float]:
+    S1, _S2 = variables
     S1_conc: float = S1 / compartment
     reaction1: float = S1_conc * k1
     dS1dt: float = -compartment * reaction1
@@ -69,7 +72,10 @@ def model(time: float, variables: Iterable[float]) -> Iterable[float]:
     return dS1dt, dS2dt
 
 
-def derived(time: float, variables: Iterable[float]) -> dict[str, float]:
+def derived(
+    time: float,  # noqa: ARG001 ; API stability
+    variables: Iterable[float],
+) -> dict[str, float]:
     S1, S2 = variables
     S1_conc: float = S1 / compartment
     S2_conc: float = S2 / compartment

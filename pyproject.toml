@@ -7,30 +7,31 @@ dev = [
     "coverage>=7.9.1",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.3",
-    "mkdocs>=1.6.1,<2.0.0",
+    "mike>=2.1.3",
     "mkdocs-jupyter>=0.25.1",
     "mkdocs-material>=9.6.14",
+    "mkdocs>=1.6.1,<2.0.0",
+    "pandas>=2.3.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "pytest>=8.4.1",
     "ruff>=0.15.11",
-    "ssort>=0.14.0",
-    "toml>=0.10.2",
-    "toml-sort>=0.24.2",
-    "wadler-lindig>=0.1.7",
-    "pandas>=2.3.0",
     "scipy>=1.16.0",
-    "mike>=2.1.3",
+    "ssort>=0.14.0",
+    "toml-sort>=0.24.2",
+    "toml>=0.10.2",
+    "wadler-lindig>=0.1.7",
 ]
 
 [project]
-authors = [{ name = "Marvin van Aalst", email = "marvin.vanaalst@gmail.com" }]
+authors = [{ email = "marvin.vanaalst@gmail.com", name = "Marvin van Aalst" }]
 dependencies = ["python-libsbml>=5.20.4", "sympy>=1.14.0"]
 description = "Add your description here"
 license = "MIT"
 maintainers = [
-    { name = "Marvin van Aalst", email = "marvin.vanaalst@gmail.com" },
+    { email = "marvin.vanaalst@gmail.com", name = "Marvin van Aalst" },
 ]
 name = "pysbml"
 readme = "README.md"
@@ -43,11 +44,15 @@ include = ["pysbml"]
 
 [tool.pyright]
 deprecateTypingAliases = true
-exclude = ["**/__pycache__", "tmp", "tests/assets"]
-include = ["docs", 'publication-figures', "src", "tests"]
+exclude = ["**/__pycache__", "tests/assets", "tmp"]
+include = ["docs", "src", "tests", 'publication-figures']
 pythonVersion = "3.12"
 reportMissingModuleSource = "none"
 strict = []
+
+[tool.pytest.ini_options]
+timeout = 60
+addopts = ["-n", "auto"]
 
 [tool.ruff]
 exclude = ["tests/assets"]
@@ -69,47 +74,44 @@ ignore = [
     "FIX001",  # line contains FIXME
     "ISC001",  # single line implicit string concat
     "N806",    # non-lowercase variable
+    "PD010",   # pivot table
     "PGH003",  # specific rule type ignore
+    "PLR0911", # too many statements
+    "PLR0912", # too many branches
+    "PLR0913", # max num of arguments
+    "PLR0915", # too many lines
+    "PT011",   # pytest.raises is too broad
+    "RUF022",  # unsorted all
     "S110",    # try-except-pass
     "S301",    # pickle usage
+    "TC006",   # cast("type")
     "TD001",   # invalid todo tag
     "TD002",   # missing todo author
     "TD003",   # missing todo link
     "TD004",   # missing todo version
     "TD005",   # missing todo date
     "TRY003",  # raise vanilla args
-    "PLR0912", # too many branches
-    "PLR0911", # too many statements
-    "PLR0913", # max num of arguments
-    "PLR0915", # too many lines
-    "PD010",   # pivot table
-    "PT011",   # pytest.raises is too broad
-    "RUF022",  # unsorted all
-    "TC006",   # cast("type")
 ]
 select = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = [
-    "T201", # print statements
     "D",    # all of documentation
+    "T201", # print statements
 ]
 "tests/*" = [
-    "S101",    # assert
     "D",       # all of documentation
-    "PLR2004", # magic comparisons
-    "SLF",
     "PD901",   # "df" name
+    "PLR2004", # magic comparisons
+    "S101",    # assert
+    "SLF",
 ]
-"tests/assets/*" = ["ARG001", "INP001", "N816", "F841"]
+"tests/assets/*" = ["ARG001", "F841", "INP001", "N816"]
 "tmp/*" = [
+    "D",    # all of documentation
     "I001", # unsorted imports
     "S101", # assert
-    "D",    # all of documentation
 ]
-
-[tool.pytest.ini_options]
-timeout = 60
 
 [tool.tomlsort]
 sort_table_keys = true
