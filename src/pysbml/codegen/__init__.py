@@ -283,7 +283,7 @@ def codegen(model: tdata.Model) -> str:
         if unpack:
             source.append(unpack)
         for dname in derived_in_order:
-            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
         source.append(
             f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.trigger))}) - 0.5"
         )
@@ -296,7 +296,7 @@ def codegen(model: tdata.Model) -> str:
         if unpack:
             source.append(unpack)
         for dname in derived_in_order:
-            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
         source.extend(
             [
                 f"{INDENT}return {{",
@@ -315,7 +315,7 @@ def codegen(model: tdata.Model) -> str:
             if unpack:
                 source.append(unpack)
             for dname in derived_in_order:
-                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
             source.append(
                 f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.delay))})"
             )
@@ -327,7 +327,7 @@ def codegen(model: tdata.Model) -> str:
             if unpack:
                 source.append(unpack)
             for dname in derived_in_order:
-                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")
+                source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
             source.append(
                 f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.priority))})"
             )

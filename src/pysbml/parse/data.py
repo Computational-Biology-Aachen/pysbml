@@ -184,6 +184,7 @@ class Reaction:
     stoichiometry: Mapping[str, float | list[tuple[float, str]]]
     args: list[Symbol]
     local_pars: dict[str, Parameter] = field(default_factory=dict)
+    fast: bool = False
 
     def __repr__(self) -> str:
         """Return formatted string representation."""

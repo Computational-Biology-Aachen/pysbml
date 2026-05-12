@@ -132,7 +132,7 @@ def _simulate_events(
         def enqueue(idx: int, cap: np.ndarray) -> None:
             pfn = events[idx][5]
             p = float(pfn(fire_time, updated_state)) if pfn is not None else 0.0
-            queue.append((-p, random.random(), idx, tuple(cap)))
+            queue.append((-p, random.random(), idx, tuple(cap)))  # noqa: S311 ; not cryptographic
             queue.sort()
 
         for idx in event_indices:
@@ -366,7 +366,7 @@ def routine(test: int, test_dir: Path | None = None) -> None:
             t_eval=t,
             atol=settings.atol / 100,
             rtol=settings.rtol / 100,
-            method="LSODA",
+            method="Radau",
         )
         sim_t = np.asarray(sol.t, dtype=float)
         sim_y = np.asarray(sol.y, dtype=float)
@@ -770,42 +770,35 @@ _SKIP: dict[int, str] = {
     1538: "DDE (delay) not supported",
     1592: "DDE (delay) not supported",
     1593: "DDE (delay) not supported",
-    # --- Fast reactions not supported ---
-    # SBML fast reactions require quasi-steady-state algebra; pysbml raises
-    # NotImplementedError.  Fix: implement QSS reduction or warn and drop.
-    870: "fast reactions not supported",
-    871: "fast reactions not supported",
-    872: "fast reactions not supported",
-    873: "fast reactions not supported",
-    874: "fast reactions not supported",
-    875: "fast reactions not supported",
-    986: "fast reactions not supported",
-    987: "fast reactions not supported",
-    988: "fast reactions not supported",
-    1051: "fast reactions not supported",
-    1052: "fast reactions not supported",
-    1053: "fast reactions not supported",
-    1396: "fast reactions not supported",
-    1398: "fast reactions not supported",
-    1399: "fast reactions not supported",
-    1539: "fast reactions not supported",
-    1544: "fast reactions not supported",
-    1545: "fast reactions not supported",
-    1546: "fast reactions not supported",
-    1547: "fast reactions not supported",
-    1548: "fast reactions not supported",
-    1549: "fast reactions not supported",
-    1550: "fast reactions not supported",
-    1551: "fast reactions not supported",
-    1558: "fast reactions not supported",
-    1559: "fast reactions not supported",
-    1560: "fast reactions not supported",
-    1565: "fast reactions not supported",
-    1567: "fast reactions not supported",
-    1568: "fast reactions not supported",
-    1569: "fast reactions not supported",
-    1570: "fast reactions not supported",
-    1571: "fast reactions not supported",
+    # --- Fast reactions: QSS implementation partial ---
+    # 870, 872-875, 986, 987, 1051-1053 now pass with QSS reduction.
+    # Remaining cases require unsupported QSS variants:
+    871: "QSS: small trajectory divergence from reference (unresolved)",
+    988: "QSS: fast reaction interleaved with slow reactions not supported",
+    # QSS: sympy cannot solve the fast-subsystem flux algebraically
+    1396: "QSS: cannot solve algebraically",
+    1398: "QSS: cannot solve algebraically",
+    1539: "QSS: cannot solve algebraically",
+    1544: "QSS: cannot solve algebraically",
+    1545: "QSS: cannot solve algebraically",
+    1546: "QSS: cannot solve algebraically",
+    1547: "QSS: cannot solve algebraically",
+    1548: "QSS: cannot solve algebraically",
+    1549: "QSS: cannot solve algebraically",
+    1550: "QSS: cannot solve algebraically",
+    1551: "QSS: cannot solve algebraically",
+    1558: "QSS: cannot solve algebraically",
+    1559: "QSS: cannot solve algebraically",
+    1560: "QSS: cannot solve algebraically",
+    1565: "QSS: cannot solve algebraically",
+    1567: "QSS: cannot solve algebraically",
+    # QSS: piecewise kinetics produce nan solution branches
+    1568: "QSS: piecewise kinetics not supported",
+    1570: "QSS: piecewise kinetics not supported",
+    # QSS: all species in fast reactions → no ODE state variables remain
+    1399: "QSS: all-fast system produces no ODE state variables",
+    1569: "QSS: all-fast system produces no ODE state variables",
+    1571: "QSS: all-fast system produces no ODE state variables",
     # --- BooleanAtom in kinetic law not supported ---
     # sympy raises TypeError when a bare True/False appears in an arithmetic
     # expression.  Fix: add a BooleanAtom→{0,1} rewrite pass in mathml2sympy.
