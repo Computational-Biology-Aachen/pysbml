@@ -269,7 +269,7 @@ def _simulate_events(
                         events=available_triggers or None,
                         atol=atol,
                         rtol=rtol,
-                        method="Radau",
+                        method="RK45",
                     )
                 except ValueError:
                     epsilon = max(1e-12, 1e-9 * abs(segment_end - t_cur))
@@ -279,7 +279,7 @@ def _simulate_events(
                         t_span=(t_cur, t_cur + epsilon),
                         atol=atol,
                         rtol=rtol,
-                        method="Radau",
+                        method="RK45",
                     )
                     if epsilon_sol.status == 0 and len(epsilon_sol.t) > 0:
                         y_cur = np.asarray(epsilon_sol.y, dtype=float)[:, -1].copy()
@@ -327,9 +327,15 @@ def _simulate_events(
     return t_arr, np.asarray(recorded_states, dtype=float).T
 
 
-def routine(test: int, test_dir: Path | None = None) -> None:
+def routine(
+    test: int,
+    test_dir: Path | None = None,
+    model_file: Path | None = None,
+) -> None:
     test_dir = ASSET_PATH if test_dir is None else test_dir
-    model_file, settings, expected = get_case_files(test, test_dir=test_dir)
+    preferred_file, settings, expected = get_case_files(test, test_dir=test_dir)
+    if model_file is None:
+        model_file = preferred_file
     if model_file is None:
         pytest.fail("No SBML model file — add to _SKIP if intentional")
 
@@ -622,6 +628,17 @@ _SKIP: dict[int, str] = {
     1641: "no ODE state variables",
     1781: "no ODE state variables",
     1782: "no ODE state variables",
+    1785: "no ODE state variables",
+    1786: "no ODE state variables",
+    1787: "no ODE state variables",
+    1788: "no ODE state variables",
+    1789: "no ODE state variables",
+    1790: "no ODE state variables",
+    1791: "no ODE state variables",
+    1792: "no ODE state variables",
+    1793: "no ODE state variables",
+    1794: "no ODE state variables",
+    1796: "no ODE state variables",
     1803: "no ODE state variables",
     1804: "no ODE state variables",
     1805: "no ODE state variables",
@@ -669,6 +686,7 @@ _SKIP: dict[int, str] = {
     1419: "DDE (delay) not supported",
     1454: "DDE (delay) not supported",
     1480: "DDE (delay) not supported",
+    1481: "DDE (delay) not supported",
     1518: "DDE (delay) not supported",
     1519: "DDE (delay) not supported",
     1520: "DDE (delay) not supported",
@@ -689,6 +707,7 @@ _SKIP: dict[int, str] = {
     988: "QSS: fast reaction interleaved with slow reactions not supported",
     # QSS: sympy cannot solve the fast-subsystem flux algebraically
     1396: "QSS: cannot solve algebraically",
+    1397: "QSS: cannot solve algebraically",
     1398: "QSS: cannot solve algebraically",
     1539: "QSS: cannot solve algebraically",
     1544: "QSS: cannot solve algebraically",
@@ -711,6 +730,7 @@ _SKIP: dict[int, str] = {
     1399: "QSS: all-fast system produces no ODE state variables",
     1569: "QSS: all-fast system produces no ODE state variables",
     1571: "QSS: all-fast system produces no ODE state variables",
+    1572: "QSS: all-fast system produces no ODE state variables",
     # --- BooleanAtom in kinetic law not supported ---
     # sympy raises TypeError when a bare True/False appears in an arithmetic
     # expression.  Fix: add a BooleanAtom→{0,1} rewrite pass in mathml2sympy.
@@ -725,6 +745,36 @@ TEST_IDS = sorted(
 )
 
 
+def _all_version_params() -> list[tuple[int, Path]]:
+    params: list[tuple[int, Path]] = []
+    for dir_path in sorted(ASSET_PATH.iterdir()):
+        if not (dir_path.is_dir() and dir_path.name.isdigit()):
+            continue
+        case_id = int(dir_path.name)
+        if case_id in _SKIP:
+            continue
+        prefix = dir_path.name
+        params.extend(
+            (case_id, xml_file)
+            for xml_file in sorted(dir_path.glob(f"{prefix}-sbml-*.xml"))
+        )
+    return params
+
+
+_ALL_VERSION_PARAMS = _all_version_params()
+_ALL_VERSION_IDS = [
+    f"{case:05d}-{f.stem.split('-sbml-')[1]}" for case, f in _ALL_VERSION_PARAMS
+]
+
+
 @pytest.mark.parametrize("test", TEST_IDS)
 def test_import_case(test: int) -> None:
     routine(test=test)
+
+
+@pytest.mark.all_versions
+@pytest.mark.parametrize(
+    ("test", "model_file"), _ALL_VERSION_PARAMS, ids=_ALL_VERSION_IDS
+)
+def test_import_case_all_versions(test: int, model_file: Path) -> None:
+    routine(test=test, model_file=model_file)

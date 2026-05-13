@@ -53,6 +53,9 @@ strict = []
 [tool.pytest.ini_options]
 timeout = 60
 addopts = ["-n", "auto"]
+markers = [
+    "all_versions: test each case against every available SBML version file (default: preferred version only)",
+]
 
 [tool.ruff]
 exclude = ["tests/assets"]
