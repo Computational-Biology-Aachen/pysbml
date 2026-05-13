@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import libsbml
 
-from . import data, l1
+from . import data, l1, l2, l3
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -31,13 +31,25 @@ def parse(
 ) -> Model:
     """Parse sbml model."""
     # FIXME: actually use different parsers here
-    match version:
-        case 1:
+    match (level, version):
+        case (1, 1):
             return l1.parse(lib_model=lib_model, level=level)
-        case 2:
+        case (1, 2):
             return l1.parse(lib_model=lib_model, level=level)
-        case 3:
-            return l1.parse(lib_model=lib_model, level=level)
+        case (2, 1):
+            return l2.parse(lib_model=lib_model, level=level)
+        case (2, 2):
+            return l2.parse(lib_model=lib_model, level=level)
+        case (2, 3):
+            return l2.parse(lib_model=lib_model, level=level)
+        case (2, 4):
+            return l2.parse(lib_model=lib_model, level=level)
+        case (2, 5):
+            return l2.parse(lib_model=lib_model, level=level)
+        case (3, 1):
+            return l3.parse(lib_model=lib_model, level=level)
+        case (3, 2):
+            return l3.parse(lib_model=lib_model, level=level)
         case _:
             msg = f"Unknown SBML version {version}"
             raise NotImplementedError(msg)
