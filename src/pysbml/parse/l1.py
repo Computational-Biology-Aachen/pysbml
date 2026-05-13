@@ -39,6 +39,7 @@ __all__ = [
     "parse_events",
     "parse_functions",
     "parse_initial_assignments",
+    "parse_local_parameters",
     "parse_parameters",
     "parse_reactions",
     "parse_rules",
@@ -191,10 +192,12 @@ def parse_species(model: Model, lib_model: libsbml.Model) -> None:
             cf if bool(cf := compound.getConversionFactor()) else None
         )
         initial_amount = (
-            None if str(init := compound.getInitialAmount()) == "nan" else init
+            compound.getInitialAmount() if compound.isSetInitialAmount() else None
         )
         initial_concentration = (
-            None if str(init := compound.getInitialConcentration()) == "nan" else init
+            compound.getInitialConcentration()
+            if compound.isSetInitialConcentration()
+            else None
         )
         has_boundary_condition: bool = compound.getBoundaryCondition()
         if has_boundary_condition:
@@ -304,18 +307,18 @@ def _parse_rate_rule(model: Model, rule: libsbml.RateRule) -> None:
 def parse_rules(model: Model, sbml_model: libsbml.Model) -> None:
     """Parse rules and separate them by type."""
     for rule in sbml_model.getListOfRules():
-        if rule.element_name == "algebraicRule":
+        if isinstance(rule, libsbml.AlgebraicRule):
             _parse_algebraic_rule(model, rule=rule)
-        elif rule.element_name == "assignmentRule":
+        elif isinstance(rule, libsbml.AssignmentRule):
             _parse_assignment_rule(model, rule=rule)
-        elif rule.element_name == "rateRule":
+        elif isinstance(rule, libsbml.RateRule):
             _parse_rate_rule(model, rule=rule)
         else:
-            msg = "Unknown rate type"
-            raise ValueError(msg)
+            msg = f"Unknown rule type: {rule.element_name}"
+            raise TypeError(msg)
 
 
-def _parse_local_parameters(
+def parse_local_parameters(
     kinetic_law: libsbml.KineticLaw,
 ) -> dict[str, Parameter]:
     """Parse local parameters."""
@@ -414,7 +417,7 @@ def parse_reactions(model: Model, sbml_model: libsbml.Model) -> None:
             body=body,
             args=args,
             stoichiometry=_parse_stoichiometries(model=model, reaction=reaction),
-            local_pars=_parse_local_parameters(
+            local_pars=parse_local_parameters(
                 kinetic_law=kinetic_law,
             ),
             fast=reaction.getFast(),

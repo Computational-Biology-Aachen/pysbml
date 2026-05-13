@@ -276,7 +276,7 @@ def convert_parameters(pmodel: pdata.Model, tmodel: data.Model) -> None:
 def convert_compartments(pmodel: pdata.Model, tmodel: data.Model) -> None:
     """Split SBML compartments into constant parameters and dynamic variables."""
     for k, par in pmodel.compartments.items():
-        if par.is_constant:
+        if par.is_constant and k not in pmodel.rate_rules:
             tmodel.parameters[k] = data.Parameter(
                 value=sympy.Float(par.size), unit=None
             )
@@ -291,7 +291,9 @@ def convert_rules_and_initial_assignments(
     for name, rr in pmodel.rate_rules.items():
         # Rate rules can create variables by SBML spec. Not cool
         if name not in tmodel.variables:
-            tmodel.variables[name] = data.Variable(value=sympy.Float(0.0), unit=None)
+            existing = tmodel.parameters.pop(name, None)
+            init = existing.value if existing is not None else sympy.Float(0.0)
+            tmodel.variables[name] = data.Variable(value=init, unit=None)
 
         tmodel.reactions[f"d{name}"] = data.Reaction(
             expr=convert_mathml(rr.body, fns=tmodel.functions),
@@ -1034,7 +1036,24 @@ def _find_algebraic_floating_var(
             candidates.add(name)
 
     candidates -= determined
-    return next(iter(candidates)) if len(candidates) == 1 else None
+    if len(candidates) == 1:
+        return next(iter(candidates))
+
+    # L1v2 fallback: libsbml marks all L1 parameters/compartments constant=True by
+    # default. If no non-constant candidate was found, try parameters and compartments
+    # that are not otherwise determined — in a well-formed L1 model exactly one is
+    # floating.
+    if not candidates:
+        l1_fallback = {
+            name
+            for name in free
+            if (name in pmodel.parameters or name in pmodel.compartments)
+            and name not in determined
+        }
+        if len(l1_fallback) == 1:
+            return next(iter(l1_fallback))
+
+    return None
 
 
 def convert_algebraic_rules(pmodel: pdata.Model, tmodel: data.Model) -> None:
