@@ -909,9 +909,23 @@ def _transform_species(
 
     # We have a concentration here
     elif species.initial_concentration is not None:
-        # We can always do this safely here, as we don't need any further transformation
         if variable_is_constant(k, pmodel):
-            return _handle_constant_variable(k=k, init=init, tmodel=tmodel, ctx=ctx)
+            comp_obj = pmodel.compartments[compartment]
+            if not species.has_only_substance_units and not comp_obj.is_constant:
+                # D13 fix: constant=true + HOSU=false + initialConcentration + dynamic
+                # compartment. Spec §4.6.4: the AMOUNT is held constant, not the
+                # concentration. Derive k = k_amount / C(t) so concentration tracks the
+                # compartment while the amount stays fixed.
+                k_amount = f"{k}_amount"
+                tmodel.parameters[k_amount] = data.Parameter(
+                    value=sympy.Float(float(init) * comp_obj.size), unit=None
+                )
+                tmodel.derived[k] = _div_expr(k_amount, compartment)
+                for name in ctx.rxns_by_var[k]:
+                    tmodel.reactions[name].stoichiometry.pop(k, None)
+            else:
+                _handle_constant_variable(k=k, init=init, tmodel=tmodel, ctx=ctx)
+            return None
 
         # If it IS a concentration but has only substance units
         # is set, we have to multiply it by the compartment initially

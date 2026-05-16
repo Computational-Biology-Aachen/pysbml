@@ -356,7 +356,7 @@ tmodel.derived[k]            = {k}_conc * compartment
 | ---- | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | D1   | `SPEC_SILENT`   | pysbml  | Species with neither `initialAmount` nor `initialConcentration`: spec says value is "unknown or from external source" (§4.6.4). pysbml injects 0.0 using a co-reactant heuristic to guess amount vs concentration. Tests: t676, t688 → amount; t1513 → concentration.                                              |
 | D2   | `SPEC_SILENT`   | pysbml  | `_handle_amount_boundary_has_substance_units` (test 1123): source FIXME — despite `hasOnlySubstanceUnits=True`, derives `{k}_conc` and forces `rxn_had_compartment=True`. Spec does not specify this interaction.                                                                                                  |
-| D13  | `SPEC_CONFLICT` | pysbml  | `constant=true`, `hasOnlySubstanceUnits=false`, initialized via `initialConcentration` in a non-constant compartment: spec §4.6.4 states the **amount** is held constant. pysbml stores the raw `initialConcentration` value, pinning concentration instead. Bug latent when `C(0)=1` (cases 01117, 01118, 01377). |
+| D13  | ~~`SPEC_CONFLICT`~~ **FIXED** | pysbml | `constant=true`, `hasOnlySubstanceUnits=false`, initialized via `initialConcentration` in a non-constant compartment. **Fixed:** now stores `{k}_amount = initConc × C(0)` as constant parameter and derives `k = {k}_amount / C(t)`. Cases 01117, 01118 pass. |
 | PS-F | `SPEC_SILENT`   | pysces  | Model-wide HOSU mode: if ANY species has `hasOnlySubstanceUnits=true`, ALL species switch to amount-canonical. Spec defines HOSU per-species; pysces treats it as a global model flag.                                                                                                                             |
 
 ---
@@ -803,7 +803,7 @@ Full pipeline in `transform()`:
 | Compartment event → conserve amount  | ✓       | auto-adjust {k}_conc       | ✓                 | `SPEC_SILENT`    | D12            |
 | rateOf csymbol                       | ✓       | __rateOf_X__ sentinel      | ✓                 | `SPEC_SILENT`    | D9             |
 | Deferred QSS events                  | ✓       | inject event assignments   | ✓                 | `SPEC_EXTENSION` | D11            |
-| constant species, initialConc, dyn C | ✓ parse | pinned at conc value       | t01117–t01377     | `SPEC_CONFLICT`  | D13            |
+| constant species, initialConc, dyn C | ✓       | amount = initConc × C(0)   | t01117, t01118    | ✓                | D13 fixed      |
 
 ---
 
