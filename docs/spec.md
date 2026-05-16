@@ -892,6 +892,64 @@ The full pipeline in `transform()` (relevant to understanding interaction betwee
 
 ---
 
+## RoadRunner Comparison
+
+**Source:** `ref/roadrunner/source/` (LLVM backend, commit in `ref/roadrunner/`).
+**Architecture:** roadrunner JIT-compiles SBML to native code via LLVM IR. pysbml converts SBML to a sympy-based ODE/algebraic system.
+
+### Internal Species Representation
+
+| Aspect | pysbml | roadrunner |
+| --- | --- | --- |
+| Storage | Explicit `{k}_amount` AND `{k}_conc` as separate model variables; one derived from the other | Amount-canonical: single `FloatingSpeciesAmounts` array; concentration computed at read-time as `amt/vol` |
+| HOSU effect | Controls which handler is called; determines primary state variable | Controls get/set interface only: HOSU=false → divide by compartment on read; HOSU=true → return amount directly |
+| Concentration variable | Explicit derived variable `{k}_conc = {k}_amount / C` | Computed on the fly; no separate storage slot |
+| Boundary species | Tracked but excluded from ODE; reactions zeroed | Stored in `BoundarySpeciesAmounts`; not in state vector |
+
+### Decision Tree Comparison: Species
+
+**pysbml** branches on `(HOSU, boundaryCondition, constant, compartment_valid, compartment_constant)` → selects one of ~8 `_handle_*` functions, each creating its own combination of state variables and derived variables.
+
+**roadrunner**: uniform path regardless of HOSU/BC. All species stored as amounts. The HOSU flag only affects the load/store conversion at JIT-compiled boundaries.
+
+### Feature-by-Feature Comparison
+
+| Feature | pysbml behavior | roadrunner behavior | Same result? |
+| --- | --- | --- | --- |
+| `HOSU=false` species in kinetic law | tracks as concentration; D4 heuristic strips compartment factor if present | loads `amt / compartment` (concentration) mechanically | Yes — both yield concentration; D4 heuristic compensates for same pattern |
+| `HOSU=true` species in kinetic law | tracks as amount directly | loads raw amount | Yes |
+| EventAssignment to `HOSU=false` species | D8: multiply assigned value by compartment to get amount | multiplies by compartment at store time (`ModelDataSymbolResolver::storeSymbolValue`) | Yes — identical conversion |
+| Rate rule on `HOSU=false` species, dynamic compartment | D5: product rule `dA/dt = V·dc/dt + c·dV/dt` | same product rule (`EvalRateRuleRatesCodeGen`) | Yes — identical chain rule |
+| Algebraic rules | D6: `sympy.solve` identifies floating variable; supports nonlinear only if sympy can solve | **THROWS** `"Unable to support algebraic rules"` (LLVM backend); legacy C generator ignores them | No — pysbml handles algebraic rules; roadrunner rejects them |
+| Conservation law reduction | None; all floating species are ODE state variables | Optional (`CONSERVED_MOIETIES` flag): L0-matrix null-space analysis via `lsLibStructural`; dependent species rewritten as assignment rules of conserved moiety parameters | No — roadrunner can reduce ODE dimensionality; pysbml cannot |
+| `rateOf` csymbol | D9: sentinel `__rateOf_X__` + sympy substitution via `substitute_rate_of()` | Fully implemented in LLVM codegen: reconstructs rate from stoichiometry × kinetic laws; quotient-rule correction for HOSU=false species in dynamic compartment | Equivalent (both implement the correct rateOf semantics) |
+| `delay` csymbol | D10: time-shift substitution (`t → t−d`) for assignment rules; `Piecewise` for static vars; `NotImplementedError` for true DDEs | **THROWS** `"Unable to support delay differential equations"` — no fallback at all | No — pysbml partially supports delay; roadrunner always rejects |
+| No `initialAmount`/`initialConcentration` | D1: injects 0.0 using co-reactant heuristic (amount vs concentration) | Injects 0.0 and emits `LOG_WARNING`; no amount-vs-concentration heuristic (uses HOSU to determine units) | Similar — both default to 0; roadrunner warns, pysbml guesses |
+| `fast=true` reaction | D3/D11: full QSS reduction + deferred-QSS event injection | Unknown from source review (likely ignored or rejected in L3v2 context) | Unknown |
+| Constraints | D7: silently ignored | Unknown | Unknown |
+| Conversion factors | Applied to stoichiometry | `EvalConversionFactorCodeGen` handles model/species-level conversion factors | Same |
+| Dynamic stoichiometry (`SpeciesReference` with `id`) | Tracked as parameter; substituted into ODE | `EvalVolatileStoichCodeGen` generates code for runtime stoichiometry | Same |
+
+### Roadrunner-Specific Divergences
+
+| ID | Flag | Element | Description |
+| --- | --- | --- | --- |
+| RR-A | `SPEC_CONFLICT` | AlgebraicRule | roadrunner LLVM backend throws `"Unable to support algebraic rules"` on any model containing an algebraicRule. The SBML L3v2 spec §4.8 requires interpreters to support algebraic rules. 102 L3v2 test cases (D6) would fail. |
+| RR-B | `SPEC_EXTENSION` | Species/Reaction | Optional conservation law reduction via `CONSERVED_MOIETIES` flag: L0-matrix null-space analysis rewrites dependent species as `dep = CM - Σ(L0ᵢⱼ · indⱼ)`. Introduces new global parameters (`CM_*`) not present in original SBML. Numerical behavior is equivalent but model structure is transformed. |
+| RR-C | `SPEC_CONFLICT` | Event / MathML | `delay` csymbol always throws `"Unable to support delay differential equations"`. Spec §3.4.6 defines delay as a valid MathML operator. 52 L3v2 test cases (D10) would fail. |
+
+### Architectural Summary
+
+pysbml and roadrunner reach the same ODE for most compliant L3v2 models. Key behavioral gaps:
+
+1. **Algebraic rules**: roadrunner rejects (throw); pysbml solves via sympy.
+2. **Delay**: roadrunner rejects (throw); pysbml approximates via time-shift.
+3. **D4 heuristic**: pysbml auto-corrects traditional concentration/time kinetic laws; roadrunner does not need the heuristic because its amount-canonical representation with HOSU-based loading already yields the correct ODE (the compartment factor and the concentration conversion cancel).
+4. **Species variables**: pysbml exposes both `{k}_amount` and `{k}_conc` as named model variables; roadrunner only exposes the amount internally (concentration is derived at read time and not a named variable).
+5. **Conservation laws**: roadrunner can optionally reduce ODE dimension via moiety analysis; pysbml cannot.
+
+---
+
 ## Divergence Index
 
 | ID  | Flag             | Element         | Description                                                                                                                                                                                                                                                                                                |
