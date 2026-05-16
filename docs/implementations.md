@@ -1,7 +1,8 @@
 # SBML Implementation Comparison
 
 Tracks how each tool transforms SBML L3v2 into an executable ODE system.
-Add a new `##` section per library as more tools are compared.
+Organized by SBML element; each section has a `### LibraryName` subsection per tool.
+Add a new `### LibraryName` block inside each element when comparing more tools.
 
 **Spec:** SBML Level 3 Version 2 Core Release 2 (29 March 2019)
 **Divergence flags:** See [`divergences.md`](divergences.md) for flag definitions and the full test-case table.
@@ -10,31 +11,32 @@ Add a new `##` section per library as more tools are compared.
 
 ## Feature Matrix
 
-| Feature | pysbml | roadrunner |
-| --- | --- | --- |
-| Internal species storage | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time |
-| HOSU effect | Selects one of ~8 `_handle_*` dispatch paths | Affects load/store conversion only |
-| Algebraic rules | `sympy.solve` → assignment rule (D6) | **Throws** (RR-A) |
-| Conservation law reduction | None | Optional L0-matrix moiety analysis (RR-B) |
-| Kinetic law compartment factor | D4 auto-strip heuristic | None needed (HOSU loading cancels compartment) |
-| EventAssignment to HOSU=false | Multiply by compartment (D8) | Multiply by compartment at store |
-| Rate rule + dynamic compartment | Product rule correction (D5) | Same product rule |
-| rateOf csymbol | Sentinel + sympy substitution (D9) | Native LLVM IR codegen with quotient-rule |
-| delay csymbol | Time-shift approximation (D10) | **Throws** (RR-C) |
-| No initialAmount/initialConc | 0.0 + amount-vs-conc heuristic (D1) | 0.0 + LOG\_WARNING |
-| Constraints | Silently ignored (D7) | Unknown |
-| fast=true reaction | QSS reduction + deferred events (D3/D11) | Unknown |
-| Conversion factors | Applied to stoichiometry | EvalConversionFactorCodeGen |
-| Dynamic stoichiometry | SpeciesRef → parameter | EvalVolatileStoichCodeGen |
+| Feature                         | pysbml                                             | roadrunner                                           |
+| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------- |
+| Internal species storage        | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time |
+| HOSU effect                     | Selects one of ~8 `_handle_*` dispatch paths       | Affects load/store conversion only                   |
+| Algebraic rules                 | `sympy.solve` → assignment rule (D6)               | **Throws** (RR-A)                                    |
+| Conservation law reduction      | None                                               | Optional L0-matrix moiety analysis (RR-B)            |
+| Kinetic law compartment factor  | D4 auto-strip heuristic                            | None needed (HOSU loading cancels compartment)       |
+| EventAssignment to HOSU=false   | Multiply by compartment (D8)                       | Multiply by compartment at store                     |
+| Rate rule + dynamic compartment | Product rule correction (D5)                       | Same product rule                                    |
+| rateOf csymbol                  | Sentinel + sympy substitution (D9)                 | Native LLVM IR codegen with quotient-rule            |
+| delay csymbol                   | Time-shift approximation (D10)                     | **Throws** (RR-C)                                    |
+| No initialAmount/initialConc    | 0.0 + amount-vs-conc heuristic (D1)                | 0.0 + `LOG_WARNING`                                  |
+| Constraints                     | Silently ignored (D7)                              | Unknown                                              |
+| fast=true reaction              | QSS reduction + deferred events (D3/D11)           | Unknown                                              |
+| Conversion factors              | Applied to stoichiometry                           | EvalConversionFactorCodeGen                          |
+| Dynamic stoichiometry           | SpeciesRef → parameter                             | EvalVolatileStoichCodeGen                            |
+
+### Library Architectures
+
+**pysbml** — `src/pysbml/` — parse layer (`parse/`), transform layer (`transform/`)
+SBML → sympy ODE/algebraic system via two-stage pipeline (parse: libsbml → dataclasses; transform: dataclasses → mxlpy Model).
+
+**roadrunner** — `ref/roadrunner/source/` (LLVM backend)
+JIT-compiles SBML to native machine code via LLVM IR. Amount-canonical species storage; concentration derived at read/write boundaries.
 
 ---
-
-## pysbml
-
-**Source:** `src/pysbml/` — parse layer (`parse/`), transform layer (`transform/`)
-**Approach:** SBML → sympy ODE/algebraic system. Two-stage pipeline: parse (libsbml → dataclasses) then transform (dataclasses → mxlpy Model).
-
-### Element Decision Trees
 
 ## 1. FunctionDefinition (§4.3)
 
@@ -43,10 +45,9 @@ Add a new `##` section per library as more tools are compared.
 - Lambda expression defining a reusable mathematical function.
 - Arguments are positional; body is a MathML expression.
 - Cannot be recursive (no cycles in function call graph).
-- Return type matches body expression type.
 - Identifiers of FunctionDefinitions may appear as function calls in MathML `<apply>` elements.
 
-### Transform
+### pysbml
 
 `convert_functions` in `transform/__init__.py`:
 
@@ -57,13 +58,13 @@ for each FunctionDefinition f with args (a1, ..., an) and body B:
 # During kinetic law / rule parsing, function calls are inlined via substitution.
 ```
 
-### Tests
+### roadrunner
 
-Cases 00001–00045 and many others exercise function definitions.
+Functions inlined at JIT compile time. No divergences noted.
 
 ### Divergences
 
-None observed. Implementation matches spec.
+None.
 
 ---
 
@@ -74,15 +75,18 @@ None observed. Implementation matches spec.
 - Named unit composed of base SI units with `kind`, `exponent`, `scale`, `multiplier`.
 - Built-in reserved unit names (`substance`, `volume`, `area`, `length`, `time`) override model defaults when defined.
 - SBML does not mandate unit enforcement — units are annotation.
-- `unitSIdRef` values appear on species, compartments, parameters, model, etc.
 
-### Transform
+### pysbml
 
 `convert_units` in `transform/__init__.py`:
 
 - Maps known SBML unit kinds to sympy unit objects.
 - Determines `substance_unit` for the model (used for species scaling).
 - Does **not** perform runtime unit enforcement.
+
+### roadrunner
+
+Units treated as annotation only. No divergences noted.
 
 ### Divergences
 
@@ -94,13 +98,12 @@ None relevant to ODE generation.
 
 ### Spec
 
-- `spatialDimensions`: 0, 1, 2, 3, or unset (packages may allow non-integer).
+- `spatialDimensions`: 0, 1, 2, 3, or unset.
 - `size`: initial value; if absent and no InitialAssignment, value is unknown.
 - `constant="true"`: size never changes.
 - `constant="false"`: size may change via RateRule, AssignmentRule, or EventAssignment.
-- `units`: optional annotation.
 
-### Transform
+### pysbml
 
 `convert_compartments` in `transform/__init__.py`:
 
@@ -116,6 +119,10 @@ for each Compartment c:
         # governed by assignment rule or event assignment
 ```
 
+### roadrunner
+
+Constant compartments optimized at JIT compile time. Non-constant compartments tracked in model data. No divergences noted.
+
 ### Divergences
 
 None observed.
@@ -125,8 +132,6 @@ None observed.
 ## 4. Species (§4.6) — CRITICAL
 
 ### Spec
-
-Attributes:
 
 | Attribute               | Required | Default | Meaning                                                                        |
 | ----------------------- | -------- | ------- | ------------------------------------------------------------------------------ |
@@ -141,12 +146,11 @@ Attributes:
 Key spec rules:
 - At most one of `initialAmount` / `initialConcentration` should be set. If neither is set, initial value is "unknown or from an external source" (§4.6.4).
 - When `constant="false"` and `boundaryCondition="false"`, reactions affect the species amount.
-- The ODE describes rate of change of **amount** (not concentration):
-  `dn_S/dt = convFactor_S * Σ_j(stoich_{S,Rj} · v_{Rj})`
+- The ODE describes rate of change of **amount** (not concentration): `dn_S/dt = convFactor_S * Σ_j(stoich_{S,Rj} · v_{Rj})`
 - Rate rules on species describe `d(quantity)/dt` where quantity is amount if `hasOnlySubstanceUnits=true`, else concentration.
-- `conversionFactor` overrides the model-level `conversionFactor` for this species.
+- For `constant="true"` + `hasOnlySubstanceUnits=false` + `initialConcentration` in a non-constant compartment: spec §4.6.4 states it is the **amount** that is held constant.
 
-### Decision Tree
+### pysbml
 
 `_transform_species` in `transform/__init__.py`:
 
@@ -205,8 +209,6 @@ def transform_species(k, species, pmodel, tmodel):
             species.initial_amount = 0.0         # tests: t676, t688
         transform_species(k, species, pmodel, tmodel)  # recurse once
 ```
-
-### Handler Details
 
 **`_handle_amount`** — `hasOnlySubstanceUnits=False`, `boundaryCondition=False`
 
@@ -321,7 +323,7 @@ tmodel.variables["{k}_conc"] = Variable(value=initial_concentration)
 tmodel.derived[k]            = {k}_conc * compartment   # k (amount) is derived
 
 # InitialAssignment fix: remap IA from k → {k}_conc
-# AssignmentRule fix: rename rules targeting k to target {k}_conc; rename appearance of k → {k}_conc
+# AssignmentRule fix: rename rules targeting k to target {k}_conc
 # RateRule fix: rename fake reaction "d{k}" → "d{k}_conc"; remap stoichiometry k → {k}_conc
 # Events fix:
 #   - Substitute k → {k}_conc in triggers, delays, priorities, assignment expressions
@@ -339,15 +341,32 @@ tmodel.variables[k] = Variable(value=initial_concentration)  # raw
 # Set initial_assignments[k] = (ia or init) * compartment  (conc → amount conversion)
 # AssignmentRule fix: multiply rule math by compartment, BUT only if rule does NOT contain
 #   a __rateOf_*__ sentinel (rateOf is already in amount/time units and must not be scaled)
-#   [SPEC_SILENT: rateOf-awareness not in spec]
 ```
+
+### roadrunner
+
+**Internal representation:**
+
+| Aspect                 | pysbml                                                                                       | roadrunner                                                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Storage                | Explicit `{k}_amount` AND `{k}_conc` as separate model variables; one derived from the other | Amount-canonical: single `FloatingSpeciesAmounts` array; concentration computed at read-time as `amt/vol`       |
+| HOSU effect            | Controls which handler is called; determines primary state variable                          | Controls get/set interface only: HOSU=false → divide by compartment on read; HOSU=true → return amount directly |
+| Concentration variable | Explicit derived variable `{k}_conc = {k}_amount / C`                                       | Computed on the fly; no separate storage slot                                                                   |
+| Boundary species       | Tracked but excluded from ODE; reactions zeroed                                              | Stored in `BoundarySpeciesAmounts`; not in state vector                                                         |
+
+**Decision tree:** pysbml branches on `(HOSU, boundaryCondition, constant, compartment_valid, compartment_constant)` into ~8 `_handle_*` functions. roadrunner uses a uniform path; HOSU only affects load/store conversion at JIT boundaries.
+
+**HOSU=false in kinetic law:** roadrunner loads `amt / compartment` mechanically. Same result as pysbml's D4 heuristic — the compartment factor in the kinetic law and the `amt/compartment` conversion cancel.
+
+**No initialAmount/initialConc:** Injects 0.0 and emits `LOG_WARNING`. Uses HOSU to determine amount vs concentration units; no co-reactant heuristic.
 
 ### Divergences
 
-| ID  | Flag          | Description                                                                                                                                                                                                                                                           |
-| --- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | `SPEC_SILENT` | Species with neither `initialAmount` nor `initialConcentration`: spec says value is "unknown or from external source" (§4.6.4). pysbml injects 0.0 using a co-reactant heuristic to guess amount vs concentration. Tests: t676, t688 → amount; t1513 → concentration. |
-| D2  | `SPEC_SILENT` | `_handle_amount_boundary_has_substance_units` (test 1123): source has FIXME noting unexplained behavioral difference from non-boundary path. Spec does not specify how boundary interacts with `hasOnlySubstanceUnits=True` for amount-initialized species.           |
+| ID  | Flag            | Library | Description                                                                                                                                                                                                                                                           |
+| --- | --------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | `SPEC_SILENT`   | pysbml  | Species with neither `initialAmount` nor `initialConcentration`: spec says value is "unknown or from external source" (§4.6.4). pysbml injects 0.0 using a co-reactant heuristic to guess amount vs concentration. Tests: t676, t688 → amount; t1513 → concentration. |
+| D2  | `SPEC_SILENT`   | pysbml  | `_handle_amount_boundary_has_substance_units` (test 1123): source FIXME — despite `hasOnlySubstanceUnits=True`, derives `{k}_conc` and forces `rxn_had_compartment=True`. Spec does not specify this interaction.                                                     |
+| D13 | `SPEC_CONFLICT` | pysbml  | `constant=true`, `hasOnlySubstanceUnits=false`, initialized via `initialConcentration` in a non-constant compartment: spec §4.6.4 states the **amount** is held constant. pysbml stores the raw `initialConcentration` value, pinning concentration instead. Bug latent when `C(0)=1` (cases 01117, 01118, 01377). |
 
 ---
 
@@ -358,9 +377,8 @@ tmodel.variables[k] = Variable(value=initial_concentration)  # raw
 - `value`: optional float. If absent, value is unknown or set by InitialAssignment.
 - `constant` (required, default `true`): if `false`, may be changed by rules or events.
 - `units`: optional annotation.
-- A `Parameter` with `constant="false"` and no rule or event assignment leaves its time course undefined.
 
-### Transform
+### pysbml
 
 `convert_parameters` in `transform/__init__.py`:
 
@@ -376,10 +394,14 @@ for each Parameter p:
 **Event-assigned parameter promotion** (end of `transform()`):
 
 ```
-# If a parameter that was placed in tmodel.parameters is the target of an EventAssignment,
+# If a parameter in tmodel.parameters is the target of an EventAssignment,
 # it is promoted to tmodel.variables.
 # (Spec §4.12.5: EventAssignment targets must not be constant=true; pysbml auto-promotes.)
 ```
+
+### roadrunner
+
+Parameters stored in `GlobalParameters` array; constant parameters optimized at JIT compile time. No divergences noted.
 
 ### Divergences
 
@@ -391,12 +413,11 @@ None observed.
 
 ### Spec
 
-- Overrides the initial value of a symbol (Parameter value, Species `initialAmount`/`initialConcentration`, Compartment `size`, SpeciesReference `stoichiometry`).
+- Overrides the initial value of a symbol (Parameter, Species, Compartment, SpeciesReference stoichiometry).
 - Evaluated exactly once at t=0, after all other initial conditions are set.
 - All InitialAssignments collectively form an acyclic dependency graph.
-- Can reference any symbol with a defined initial value.
 
-### Transform
+### pysbml
 
 `convert_rules_and_initial_assignments` in `transform/__init__.py`:
 
@@ -406,9 +427,11 @@ for each InitialAssignment ia targeting symbol s:
 # Applied as initial conditions, overriding Variable.value.
 ```
 
-**Species amount correction:** For species handled by `_handle_amount` (identifier = concentration in
-laws, tracked as amount), an InitialAssignment targeting the species id provides a **concentration**
-value. pysbml multiplies by the compartment size to obtain the initial amount stored in `Variable.value`.
+**Species amount correction:** For species handled by `_handle_amount` (identifier = concentration in laws, tracked as amount), an InitialAssignment targeting the species id provides a **concentration** value. pysbml multiplies by compartment size to obtain the initial amount.
+
+### roadrunner
+
+Initial assignments evaluated at model initialization via JIT-compiled code. No divergences noted.
 
 ### Divergences
 
@@ -421,11 +444,10 @@ None observed.
 ### Spec
 
 - `variable` must be non-constant and must not also be a target of an EventAssignment.
-- Math defines the value of `variable` at **all times** (not just t=0).
-- Assignment rules collectively with InitialAssignments and KineticLaws must form an acyclic graph.
-- A species governed by an assignment rule does not have its amount changed by reactions (the assignment rule overrides).
+- Math defines the value of `variable` at **all times**.
+- A species governed by an assignment rule does not have its amount changed by reactions.
 
-### Transform
+### pysbml
 
 ```
 for each AssignmentRule ar:
@@ -433,6 +455,10 @@ for each AssignmentRule ar:
     # tmodel.variables / parameters entry for ar.variable is removed by
     # remove_duplicate_entries() called later in the pipeline.
 ```
+
+### roadrunner
+
+Assignment rules compiled to JIT code evaluated at every ODE step. No divergences noted.
 
 ### Divergences
 
@@ -446,14 +472,9 @@ None observed.
 
 - `variable` must be non-constant.
 - Math defines `d(variable)/dt`.
-- Units: {variable quantity} / {time}.
-- For Species with `hasOnlySubstanceUnits=false`, the species identifier in formulas means
-  concentration, so the rate rule math gives `d(concentration)/dt`. The rate of change of **amount**
-  must be derived from this.
-- A species with a rate rule is not affected by reactions at the same time (the rate rule replaces
-  the reaction contribution for that species; spec does not address combined case).
+- For Species with `hasOnlySubstanceUnits=false`, the species identifier means concentration, so the rate rule gives `d(concentration)/dt`. The rate of change of **amount** must be derived from this.
 
-### Transform
+### pysbml
 
 ```
 for each RateRule rr targeting variable k:
@@ -461,21 +482,21 @@ for each RateRule rr targeting variable k:
     tmodel.reactions["d{k}"] = Reaction(rate=parse_mathml(rr.math), stoichiometry={k: 1.0})
 ```
 
-**Dynamic compartment + rate rule correction** (`_handle_amount`):
-
-If a species uses `_handle_amount` (identifier = concentration, compartment is non-constant) and
-has a RateRule, the Leibniz product rule must be applied:
+**Dynamic compartment correction** (`_handle_amount`): If species uses `_handle_amount` (identifier = concentration, compartment non-constant) and has a RateRule, the Leibniz product rule is applied:
 
 ```
-# d(amount)/dt = d(conc)/dt * C + conc * dC/dt
-# pysbml computes this transformation. [SPEC_SILENT D5]
+# d(amount)/dt = d(conc)/dt * C + conc * dC/dt  [SPEC_SILENT D5]
 ```
+
+### roadrunner
+
+Same product rule applied in `EvalRateRuleRatesCodeGen`. Identical result to pysbml for D5.
 
 ### Divergences
 
-| ID  | Flag          | Description                                                                                                                                                                                                                                                                                                           |
-| --- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D5  | `SPEC_SILENT` | Chain rule correction for dynamic compartment + rate rule on a `hasOnlySubstanceUnits=false` species. Spec §4.9.4 defines rate rule math as `d(variable)/dt` but does not specify how to reconcile this when compartment is time-varying and identifier means concentration. pysbml applies the Leibniz product rule. |
+| ID  | Flag          | Library | Description                                                                                                                                                                                                         |
+| --- | ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D5  | `SPEC_SILENT` | pysbml  | Chain rule correction for `hasOnlySubstanceUnits=false` species with rate rule in a dynamic compartment. Spec §4.9.4 does not specify this reconciliation. Both pysbml and roadrunner apply the Leibniz product rule. |
 
 ---
 
@@ -484,18 +505,15 @@ has a RateRule, the Leibniz product rule must be applied:
 ### Spec
 
 - Math equals zero: `0 = f(...)`. Defines an implicit algebraic constraint.
-- Exactly one "floating variable" — a non-constant symbol whose value is undetermined by any other
-  construct — must be identifiable from the rule.
+- Exactly one "floating variable" — a non-constant symbol undetermined by any other construct — must be identifiable.
 - Cannot co-exist with an assignment or rate rule for the same variable.
-- Together with assignment rules and kinetic laws, must form an acyclic assignment graph.
 
-### Transform
+### pysbml
 
 `convert_algebraic_rules` in `transform/__init__.py`:
 
 ```
 for each AlgebraicRule ar:
-    # Identify floating variable: the non-constant symbol not determined elsewhere
     floating_var = identify_floating_variable(ar.math, pmodel, tmodel)
     solutions = sympy.solve(ar.math_expr, floating_var)
     if solutions:
@@ -503,11 +521,16 @@ for each AlgebraicRule ar:
     # else: raise or warn (nonlinear case may not yield closed-form solution)
 ```
 
+### roadrunner
+
+LLVM backend throws `"Unable to support algebraic rules"` on any model containing an algebraicRule. The legacy C generator ignores them. 102 L3v2 test cases (D6) are affected.
+
 ### Divergences
 
-| ID  | Flag          | Description                                                                                                                                                                                                                       |
-| --- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D6  | `SPEC_SILENT` | Spec requires exactly one undetermined variable but does not specify the algorithm for finding it or for solving the rule. pysbml uses `sympy.solve`, which may fail for nonlinear algebraic rules or produce multiple solutions. |
+| ID   | Flag            | Library    | Description                                                                                                                                                               |
+| ---- | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D6   | `SPEC_SILENT`   | pysbml     | Spec requires exactly one undetermined variable but does not specify the algorithm. pysbml uses `sympy.solve`, which may fail for nonlinear rules or produce multiple solutions. |
+| RR-A | `SPEC_CONFLICT` | roadrunner | LLVM backend throws `"Unable to support algebraic rules"`. Spec §4.8 requires interpreters to support algebraic rules.                                                    |
 
 ---
 
@@ -518,9 +541,9 @@ for each AlgebraicRule ar:
 - Boolean math expression that should evaluate to `true` at all valid times.
 - Optional `message` child: XHTML content for human-readable error.
 - Violation is model-defined undefined behavior; interpreters **may** warn or halt.
-- Constraints have no mathematical effect on the model (they are purely declarative).
+- Constraints have no mathematical effect on the model.
 
-### Transform
+### pysbml
 
 `convert_constraints` in `transform/__init__.py`:
 
@@ -530,11 +553,15 @@ for each Constraint c:
     # No further action.
 ```
 
+### roadrunner
+
+Behavior not determined from source review.
+
 ### Divergences
 
-| ID  | Flag             | Description                                                                                                                                                                     |
-| --- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D7  | `SPEC_EXTENSION` | Constraints are parsed but silently ignored. Spec says an interpreter *may* warn or halt on violation. pysbml issues no warning at solve time and performs no runtime checking. |
+| ID  | Flag             | Library | Description                                                                                                                                               |
+| --- | ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D7  | `SPEC_EXTENSION` | pysbml  | Constraints parsed but silently ignored at transform time. Spec says interpreter *may* warn or halt on violation. pysbml issues no warning at solve time. |
 
 ---
 
@@ -555,33 +582,24 @@ for each Constraint c:
 - `id` (optional): if set, stoichiometry becomes a dynamic model variable.
 
 **KineticLaw:**
-- `math`: MathML expression giving the reaction rate in units of **extent/time** (§4.11.7).
-  - NOT concentration/time — that is the "traditional" rate law unit, which is inappropriate for
-    multi-compartment models.
-- `listOfLocalParameters`: local parameters scoped to this kinetic law. Identifiers shadow global
-  symbols within the kinetic law.
+- `math` gives the reaction rate in units of **extent/time** (§4.11.7) — not concentration/time.
+- `listOfLocalParameters`: local parameters scoped to this kinetic law; shadow global symbols.
 - Local parameters cannot be targets of InitialAssignment, EventAssignment, or Rule.
-- Only species that are reactants, products, or modifiers of this reaction may appear by id in the math.
 
 **Rate of change formula (§4.11.7):**
-
-The ODE for species amount n_S (not concentration) is:
 
 ```
 Case 1 — no conversion factor:
     dn_S/dt = Σ_j (stoich_{S,Rj} · v_{Rj})
 
-Case 2 — model-level conversionFactor c_model (Species has none):
+Case 2 — model-level conversionFactor c_model:
     dn_S/dt = c_model · Σ_j (stoich_{S,Rj} · v_{Rj})
 
-Case 3 — species-level conversionFactor c_S:
+Case 3 — species-level conversionFactor c_S (overrides model-level):
     dn_S/dt = c_S · Σ_j (stoich_{S,Rj} · v_{Rj})
-    (species-level overrides model-level)
 ```
 
-where `stoich_{S,Rj}` is the signed net stoichiometry (products positive, reactants negative).
-
-### Transform
+### pysbml
 
 **`convert_reactions`:**
 
@@ -592,15 +610,11 @@ for each Reaction rxn:
     # Namespace local parameters: "{rxn.id}_{local_param.id}"
     for lp in rxn.kinetic_law.local_params:
         tmodel.parameters[f"{rxn.id}_{lp.id}"] = Parameter(value=lp.value)
-        # substitute lp.id → "{rxn.id}_{lp.id}" in rate expression
 
-    # Dynamic stoichiometry: SpeciesReference with id → non-constant Variable
+    # Dynamic stoichiometry: SpeciesReference with id → Variable
     for (stoich_val, stoich_id) in species_references:
         if stoich_id is not None:
             tmodel.variables[stoich_id] = Variable(value=stoich_val)
-            stoich_symbol = Symbol(stoich_id)
-        else:
-            stoich_symbol = stoich_val  # float constant
 
     tmodel.reactions[rxn.id] = Reaction(rate=rate, stoichiometry=signed_stoich_dict)
 ```
@@ -610,54 +624,58 @@ for each Reaction rxn:
 ```
 # Before transform_species, for each reaction:
 ctx.rxn_had_compartment[rxn.id] = (compartment_symbol in kinetic_law_free_symbols)
-# Used by _handle_amount to detect whether kinetic law is a traditional conc/time law
-# (which includes explicit compartment factor) vs a proper extent/time law.
 # If compartment found: remove it from kinetic law; multiply stoichiometry by compartment.
+# Detects traditional concentration/time laws and auto-corrects to extent/time.
 ```
 
 **`apply_conversion_factors`:**
 
 ```
-# After transform_species:
-for each species k in model:
+for each species k:
     cf_id = species.conversion_factor or model.conversion_factor
     if cf_id:
-        cf_sym = Symbol(cf_id)
         for rxn in tmodel.reactions.values():
             if k in rxn.stoichiometry:
-                rxn.stoichiometry[k] *= cf_sym
+                rxn.stoichiometry[k] *= Symbol(cf_id)
 ```
 
-**`convert_fast_reactions`** [SPEC_EXTENSION D3]:
+**`convert_fast_reactions`** [SPEC_EXTENSION D3/D11]:
 
 ```
 # QSS reduction for reactions with fast=True:
-# 1. Identify species exclusively participating in fast reactions.
-# 2. Solve net flux = 0 algebraically for each such species (QSS assumption).
+# 1. Identify species exclusively in fast reactions.
+# 2. Solve net flux = 0 algebraically (QSS assumption).
 # 3. Replace tmodel.variables[sp] with tmodel.derived[sp] = QSS_solution.
-# 4. For non-QSS species also in fast reactions: compute corrected stoichiometry
-#    using conservation law null space (c^T * N_fast = 0), via:
-#    eff_stoich = (c^T * N_R) / (dT/dS_j)
-# 5. Fix initial conditions: project onto QSS manifold using conservation + QSS equations.
-# 6. Deferred QSS: if net_flux.subs(params_at_t0) == 0, the fast reaction is inactive
-#    at t=0. Keep species as state variable; add event assignments so that when an event
-#    activates the fast reaction, the species is instantly set to its QSS value.
-#    [SPEC_EXTENSION D11]
+# 4. Corrected stoichiometry for non-QSS species via conservation law null space.
+# 5. Project initial conditions onto QSS manifold.
+# 6. Deferred QSS [D11]: if net_flux = 0 at t=0, keep species as state variable;
+#    inject event assignments to snap to QSS when fast reaction is activated.
 ```
+
+### roadrunner
+
+- **D4 heuristic not needed:** Amount-canonical storage with HOSU-based loading already yields correct ODE. `compartment * k * (amt/compartment) = k * amt` — the factors cancel without pysbml's heuristic.
+- **Conservation law reduction (RR-B):** Optional `CONSERVED_MOIETIES` flag enables L0-matrix null-space analysis via `lsLibStructural`. Dependent species rewritten as assignment rules of conserved moiety parameters (`CM_*`). Reduces ODE dimensionality; pysbml has no equivalent.
+- **Conversion factors:** `EvalConversionFactorCodeGen` handles model/species-level factors. Same result as pysbml.
+- **Dynamic stoichiometry:** `EvalVolatileStoichCodeGen`. Same result.
+- **`fast=true`:** Behavior not determined from source review.
 
 ### Divergences
 
-| ID  | Flag             | Description                                                                                                                                                                                                                                                |
-| --- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D3  | `SPEC_EXTENSION` | `fast=True` on Reaction triggers full QSS reduction with conservation-law-based stoichiometry correction. L3v2 spec §4.11 explicitly removed `fast`; its presence is undefined behavior.                                                                   |
-| D4  | `SPEC_SILENT`    | `rxn_had_compartment` heuristic: spec defines kinetic law unit as extent/time, but many real models write traditional concentration/time laws including an explicit compartment factor. pysbml auto-detects and auto-corrects this. Not described in spec. |
-| D11 | `SPEC_EXTENSION` | Deferred QSS: when a fast reaction is inactive at t=0, species is kept as a state variable and event assignments are injected to snap it to QSS when events activate the fast reaction. Entirely beyond what spec says about `fast`.                       |
+| ID   | Flag             | Library    | Description                                                                                                                                                                                                                                                   |
+| ---- | ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D3   | `SPEC_EXTENSION` | pysbml     | `fast=True` triggers full QSS reduction with conservation-law-based stoichiometry correction. L3v2 spec §4.11 explicitly removed `fast`.                                                                                                                      |
+| D4   | `SPEC_SILENT`    | pysbml     | `rxn_had_compartment` heuristic: pysbml auto-detects and auto-corrects traditional concentration/time kinetic laws. Not described in spec; not needed by roadrunner.                                                                                           |
+| D11  | `SPEC_EXTENSION` | pysbml     | Deferred QSS: when a fast reaction is inactive at t=0, species kept as state variable; event assignments injected to snap to QSS when the fast reaction activates.                                                                                            |
+| RR-B | `SPEC_EXTENSION` | roadrunner | Optional conservation law reduction: L0-matrix null-space analysis rewrites dependent species as `dep = CM - Σ(L0ᵢⱼ · indⱼ)`. Introduces `CM_*` parameters not in original SBML. Numerical behavior equivalent; model structure transformed. |
 
 ---
 
 ## 12. Event (§4.12)
 
-### Spec Structure
+### Spec
+
+**Structure:**
 
 ```
 Event
@@ -672,165 +690,97 @@ Event
     math: nonneg number, evaluated at trigger time, units = model time
   ListOfEventAssignments             (optional)
     EventAssignment*
-      variable: SIdRef               (Compartment | Species | SpeciesReference | Parameter)
+      variable: SIdRef
       math: new value
 ```
 
-### Trigger Semantics (§4.12.2, §4.12.7)
-
-An event fires on a **false → true** transition of the trigger math.
-
-**`initialValue`:**
-- `true` → trigger expression is treated as `true` immediately before t=0.
-  The event cannot fire at t=0 because there is no transition. It can only fire at t>0
-  after the trigger first becomes false, then transitions to true.
-- `false` → trigger expression is treated as `false` immediately before t=0.
-  The event can fire at t=0 if the trigger expression evaluates to true at that moment.
+**Trigger (§4.12.2, §4.12.7):** Fires on **false → true** transition.
+- `initialValue=true` → treated as `true` before t=0; cannot fire at t=0.
+- `initialValue=false` → treated as `false` before t=0; can fire at t=0.
 
 **`persistent`:**
-- `true` → once triggered, assignments always execute when the delay expires,
-  regardless of whether the trigger expression is still true.
-- `false` → if the trigger expression transitions back to false between trigger time and
-  execution time, the event is **cancelled** (removed from the pending queue).
-  If the trigger subsequently transitions to true again, that constitutes a new trigger event.
+- `true` → assignments always execute at delay expiry regardless of trigger state.
+- `false` → if trigger goes false before execution, event is cancelled.
 
-### `useValuesFromTriggerTime` (§4.12.1)
+**`useValuesFromTriggerTime` (§4.12.1):**
+- `true` → EventAssignment math evaluated at trigger time; saved values applied at execution.
+- `false` → math evaluated at execution time.
 
-- `true` → EventAssignment math expressions are evaluated at **trigger time**; computed values are
-  saved and applied at execution time (after any delay).
-- `false` → EventAssignment math expressions are evaluated at **execution time**.
-- No default value — must be specified.
+**Priority (§4.12.3):** Higher value executes first. Equal priority → **random order** (spec requires randomness). Priority math re-evaluated after each event execution.
 
-### Priority (§4.12.3)
+**Delay (§4.12.4):** Math evaluated at trigger time. Execution time = trigger time + delay.
 
-- Higher value executes first among simultaneous events.
-- Equal priority → **random order** (spec requires randomness, not merely undefined order).
-- No Priority element → undefined order with respect to other no-priority events and with respect to
-  events that have a Priority object.
+**EventAssignment (§4.12.5):** Variable must not be `constant=true`, a Reaction id, or an AssignmentRule target. Assignment always occurs at execution time. For species: sets the species' quantity (amount if `hasOnlySubstanceUnits=true`, concentration if `false`).
 
-**Priority evaluation:** Priority math is evaluated at execution time, not trigger time.
-After executing one event, all remaining simultaneous events have their Priority math re-evaluated
-before selecting the next.
+**Cascade (§4.12.7):** After each execution, recheck all triggers. `persistent=false` queued events re-evaluated and cancelled if trigger is false.
 
-### Delay (§4.12.4)
-
-- Delay math evaluated at **trigger time**. Must evaluate to a nonneg number.
-- Execution time = trigger time + delay.
-- No Delay element → execute immediately (conceptually at trigger time).
-
-### EventAssignment (§4.12.5)
-
-Restrictions:
-- `variable` must not be `constant="true"`.
-- `variable` must not be a Reaction id.
-- A single Event cannot assign the same `variable` twice.
-- `variable` cannot also be the target of an AssignmentRule.
-
-Assignment time is always **execution time**. `useValuesFromTriggerTime` controls only when the
-math is evaluated, not when the variable is assigned.
-
-For species: EventAssignment sets the species' **quantity** (amount if `hasOnlySubstanceUnits=true`,
-concentration if `false`).
-
-### Event Cascade Semantics (§4.12.7)
-
-After each event execution:
-- Recheck all trigger expressions (event execution may cause another event to trigger).
-- `persistent=false` events in queue: re-evaluate trigger; if false → remove from queue.
-- Events can trigger each other forming cascades; cascades may be infinite (simulator should detect).
-
-### Transform
+### pysbml
 
 `convert_events` in `transform/__init__.py`:
 
 ```
 for each Event e:
-    trigger  = parse_mathml(e.trigger.math)
-    delay    = parse_mathml(e.delay.math) if e.delay else None
-    priority = parse_mathml(e.priority.math) if e.priority else None
-    assignments = {ea.variable: parse_mathml(ea.math) for ea in e.event_assignments}
-
     tmodel.events[e.id] = Event(
-        trigger                    = trigger,
-        delay                      = delay,      # SBMLDelay sentinel before substitute_delays()
-        priority                   = priority,
+        trigger                      = parse_mathml(e.trigger.math),
+        delay                        = parse_mathml(e.delay.math) if e.delay else None,
+        priority                     = parse_mathml(e.priority.math) if e.priority else None,
         use_values_from_trigger_time = e.use_values_from_trigger_time,
-        assignments                = assignments,
-        trigger_initial_value      = e.trigger.initial_value,
-        trigger_persistent         = e.trigger.persistent,
+        assignments                  = {ea.variable: parse_mathml(ea.math) for ea in e.event_assignments},
+        trigger_initial_value        = e.trigger.initial_value,
+        trigger_persistent           = e.trigger.persistent,
     )
 ```
 
-**`substitute_delays`** [SPEC_SILENT D10]:
-
-The `SBMLDelay(x, d)` sentinel appears not only in event delays but anywhere `delay(x, d)` appears
-in MathML (kinetic laws, derived rules, initial assignments). `substitute_delays` resolves these:
+**`substitute_delays`** [SPEC_SILENT D10]: `SBMLDelay(x, d)` sentinel appears anywhere `delay(x, d)` occurs in MathML — not only in Event Delay elements:
 
 ```
 For each SBMLDelay(target_expr, delay_amount):
     if target is in derived (AssignmentRule):
-        # Substitute time → time - delay_amount in the rule expression (exact, no DDE)
-    elif target is a static variable (has InitialAssignment, no dynamics):
-        # Piecewise: history(t-d) for t < d, else current value
+        # Substitute time → time - delay_amount in rule expression
+    elif target is a static variable (has IA, no dynamics):
         return Piecewise((initial_assignment(time - d), time < d), (x, True))
     elif target is a parameter:
-        return target_expr  (constant, delay has no effect)
+        return target_expr  # constant, delay has no effect
     else:  # true DDE — dynamic variable
         raise NotImplementedError("delay() for dynamic variable not supported (DDE)")
 ```
 
-**`substitute_rate_of`:**
-
-The `rateOf` csymbol (an L3v2 package mechanism) produces a sentinel `__rateOf_X__` during parsing.
-`substitute_rate_of` replaces these with the actual rate expression for symbol X. [SPEC_SILENT D9]
-
-**Event-assigned parameter promotion:**
-
-```
-# At end of transform():
-for each Event e, EventAssignment ea:
-    if ea.variable in tmodel.parameters:
-        # Parameter is target of event assignment → must be mutable
-        val = tmodel.parameters.pop(ea.variable)
-        tmodel.variables[ea.variable] = Variable(value=val.value)
-```
+**`substitute_rate_of`** [SPEC_SILENT D9]: `__rateOf_X__` sentinel replaced with actual rate expression for symbol X.
 
 **Species event assignment unit conversion** [SPEC_SILENT D8]:
 
-For species handled by `_handle_amount` (identifier = concentration in formulas, tracked as amount):
-
 ```
 # In trigger expressions: substitute k → k / compartment
-# For EventAssignment targeting k:
-#   assigned value is in concentration units → convert to amount: multiply by compartment
-#   new_amount = assigned_conc_value * compartment
+# EventAssignment targeting k: new_amount = assigned_conc_value * compartment
 ```
 
 **Test simulator** (`_simulate_events` in `tests/test_import.py`):
+- LSODA integration until trigger fires; pending queue with `(execution_time, event_id, saved_values)`.
+- `persistent=false`: re-evaluates trigger on each ODE step for queued events.
+- Priority: sorts by priority at execution point; random shuffle among ties.
+- `useValuesFromTriggerTime`: saves math values at trigger, applies saved values at execution.
 
-- Integrates ODE with LSODA until trigger fires.
-- Maintains a pending queue with (execution_time, event_id, saved_values_if_trigger_time).
-- `persistent=false`: reevaluates trigger on each ODE step for queued events; cancels if false.
-- Priority: at each execution point, sorts pending events by priority; random shuffle among ties.
-- `useValuesFromTriggerTime`: saves math values at trigger, applies the saved values at execution.
+### roadrunner
+
+- **EventAssignment to HOSU=false species:** Multiplies by compartment at store time in `ModelDataSymbolResolver::storeSymbolValue`. Identical to D8 behavior.
+- **`rateOf` csymbol:** Fully implemented in LLVM codegen. Reconstructs rate from stoichiometry × kinetic laws; quotient-rule correction for HOSU=false species in dynamic compartment. Equivalent to pysbml D9.
+- **`delay` csymbol:** Always throws `"Unable to support delay differential equations"`. No fallback. 52 L3v2 test cases (D10) affected.
 
 ### Divergences
 
-| ID  | Flag             | Description                                                                                                                                                                                                                                                                                                           |
-| --- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D8  | `SPEC_SILENT`    | EventAssignment to `hasOnlySubstanceUnits=false` amount-tracked species: spec §4.12.5 says math must match species quantity unit but does not specify the conversion. pysbml multiplies by compartment to convert concentration → amount.                                                                             |
-| D9  | `SPEC_SILENT`    | `rateOf` csymbol supported via `__rateOf_X__` sentinel + `substitute_rate_of()`. `rateOf` is an L3v2 package feature, not L3v2 Core. Silently accepted rather than rejected.                                                                                                                                          |
-| D10 | `SPEC_EXTENSION` | `delay(x, d)` in kinetic laws / derived rules: spec §4.12.4 defines Delay only within Events. pysbml resolves `SBMLDelay` sentinels in ANY expression (kinetic laws, derived, IAs) via time-shift substitution. True DDEs (dynamic variables) raise NotImplementedError.                                              |
-| D12 | `SPEC_SILENT`    | `_handle_conc_boundary` event conservation: when a compartment EventAssignment fires without assigning the species, pysbml auto-conserves amount by adjusting `{k}_conc_new = {k}_conc_old * C_old / C_new`. Spec does not specify this conservation behavior for simultaneous compartment/species event assignments. |
+| ID   | Flag             | Library    | Description                                                                                                                                                                                                                                        |
+| ---- | ---------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D8   | `SPEC_SILENT`    | pysbml     | EventAssignment to `hasOnlySubstanceUnits=false` species: spec §4.12.5 does not specify the concentration→amount conversion. pysbml multiplies by compartment. roadrunner does the same at store time (identical result).                           |
+| D9   | `SPEC_SILENT`    | pysbml     | `rateOf` csymbol is an L3v2 package feature (not L3v2 Core). Both pysbml and roadrunner implement it; neither rejects it. pysbml via sympy substitution; roadrunner via LLVM codegen with quotient-rule.                                           |
+| D10  | `SPEC_EXTENSION` | pysbml     | `delay(x, d)` in kinetic laws / derived rules: spec §4.12.4 defines Delay only within Events. pysbml resolves `SBMLDelay` sentinels in ANY expression via time-shift substitution. True DDEs raise `NotImplementedError`.                           |
+| D12  | `SPEC_SILENT`    | pysbml     | `_handle_conc_boundary`: when a compartment EventAssignment fires without assigning the species, pysbml auto-conserves amount via `{k}_conc_new = {k}_conc_old * C_old / C_new`. Spec does not specify this conservation behavior.                  |
+| RR-C | `SPEC_CONFLICT`  | roadrunner | `delay` csymbol always throws `"Unable to support delay differential equations"`. Spec §3.4.6 defines delay as a valid MathML operator. 52 L3v2 test cases (D10) would fail.                                                                        |
 
 ---
 
+## Appendix A: pysbml Transform Pipeline
 
-### Transform Pipeline Order
-
-## Transform Pipeline Order
-
-The full pipeline in `transform()` (relevant to understanding interaction between steps):
+Full pipeline in `transform()`:
 
 ```
 1.  convert_units                    — build unit context
@@ -845,22 +795,19 @@ The full pipeline in `transform()` (relevant to understanding interaction betwee
                                      — InitialAssignments → initial_assignments
 8.  convert_reactions                — kinetic laws → sympy, local params namespaced
 9.  pre-compute ctx.rxn_had_compartment  [D4]
-10. transform_species                — main species decision tree (§4 above)
+10. transform_species                — main species decision tree
 11. apply_conversion_factors         — multiply stoichiometry by conversion factor symbols
 12. remove_duplicate_entries         — remove params/vars superseded by derived
 13. convert_algebraic_rules          — sympy.solve for floating variable [D6]
 14. convert_fast_reactions           — QSS reduction [D3]
 15. substitute_rate_of               — replace __rateOf_X__ sentinels [D9]
-16. substitute_delays                — replace SBMLDelay sentinels
+16. substitute_delays                — replace SBMLDelay sentinels [D10]
 17. promote event-assigned params to variables
 ```
 
 ---
 
-
-### Summary Compliance Table
-
-## Summary Compliance Table
+## Appendix B: pysbml Summary Compliance Table
 
 | Element / Feature                    | Parsed  | Transformed                | L3v2 Tests        | Spec Match       | Divergence     |
 | ------------------------------------ | ------- | -------------------------- | ----------------- | ---------------- | -------------- |
@@ -904,87 +851,13 @@ The full pipeline in `transform()` (relevant to understanding interaction betwee
 
 ---
 
+## Appendix C: Adding a New Library
 
----
+Add a `### LibraryName` subsection inside each relevant element section:
 
-## roadrunner
+1. Brief description of how the library handles the element
+2. Any divergences from spec or from pysbml behavior
 
-**Source:** `ref/roadrunner/source/` (LLVM backend)
-**Approach:** JIT-compiles SBML to native machine code via LLVM IR. Species stored as amounts; concentration derived at read/write boundaries.
+Add a row to the **Feature Matrix** at the top.
 
-## RoadRunner Comparison
-
-**Source:** `ref/roadrunner/source/` (LLVM backend, commit in `ref/roadrunner/`).
-**Architecture:** roadrunner JIT-compiles SBML to native code via LLVM IR. pysbml converts SBML to a sympy-based ODE/algebraic system.
-
-### Internal Species Representation
-
-| Aspect | pysbml | roadrunner |
-| --- | --- | --- |
-| Storage | Explicit `{k}_amount` AND `{k}_conc` as separate model variables; one derived from the other | Amount-canonical: single `FloatingSpeciesAmounts` array; concentration computed at read-time as `amt/vol` |
-| HOSU effect | Controls which handler is called; determines primary state variable | Controls get/set interface only: HOSU=false → divide by compartment on read; HOSU=true → return amount directly |
-| Concentration variable | Explicit derived variable `{k}_conc = {k}_amount / C` | Computed on the fly; no separate storage slot |
-| Boundary species | Tracked but excluded from ODE; reactions zeroed | Stored in `BoundarySpeciesAmounts`; not in state vector |
-
-### Decision Tree Comparison: Species
-
-**pysbml** branches on `(HOSU, boundaryCondition, constant, compartment_valid, compartment_constant)` → selects one of ~8 `_handle_*` functions, each creating its own combination of state variables and derived variables.
-
-**roadrunner**: uniform path regardless of HOSU/BC. All species stored as amounts. The HOSU flag only affects the load/store conversion at JIT-compiled boundaries.
-
-### Feature-by-Feature Comparison
-
-| Feature | pysbml behavior | roadrunner behavior | Same result? |
-| --- | --- | --- | --- |
-| `HOSU=false` species in kinetic law | tracks as concentration; D4 heuristic strips compartment factor if present | loads `amt / compartment` (concentration) mechanically | Yes — both yield concentration; D4 heuristic compensates for same pattern |
-| `HOSU=true` species in kinetic law | tracks as amount directly | loads raw amount | Yes |
-| EventAssignment to `HOSU=false` species | D8: multiply assigned value by compartment to get amount | multiplies by compartment at store time (`ModelDataSymbolResolver::storeSymbolValue`) | Yes — identical conversion |
-| Rate rule on `HOSU=false` species, dynamic compartment | D5: product rule `dA/dt = V·dc/dt + c·dV/dt` | same product rule (`EvalRateRuleRatesCodeGen`) | Yes — identical chain rule |
-| Algebraic rules | D6: `sympy.solve` identifies floating variable; supports nonlinear only if sympy can solve | **THROWS** `"Unable to support algebraic rules"` (LLVM backend); legacy C generator ignores them | No — pysbml handles algebraic rules; roadrunner rejects them |
-| Conservation law reduction | None; all floating species are ODE state variables | Optional (`CONSERVED_MOIETIES` flag): L0-matrix null-space analysis via `lsLibStructural`; dependent species rewritten as assignment rules of conserved moiety parameters | No — roadrunner can reduce ODE dimensionality; pysbml cannot |
-| `rateOf` csymbol | D9: sentinel `__rateOf_X__` + sympy substitution via `substitute_rate_of()` | Fully implemented in LLVM codegen: reconstructs rate from stoichiometry × kinetic laws; quotient-rule correction for HOSU=false species in dynamic compartment | Equivalent (both implement the correct rateOf semantics) |
-| `delay` csymbol | D10: time-shift substitution (`t → t−d`) for assignment rules; `Piecewise` for static vars; `NotImplementedError` for true DDEs | **THROWS** `"Unable to support delay differential equations"` — no fallback at all | No — pysbml partially supports delay; roadrunner always rejects |
-| No `initialAmount`/`initialConcentration` | D1: injects 0.0 using co-reactant heuristic (amount vs concentration) | Injects 0.0 and emits `LOG_WARNING`; no amount-vs-concentration heuristic (uses HOSU to determine units) | Similar — both default to 0; roadrunner warns, pysbml guesses |
-| `fast=true` reaction | D3/D11: full QSS reduction + deferred-QSS event injection | Unknown from source review (likely ignored or rejected in L3v2 context) | Unknown |
-| Constraints | D7: silently ignored | Unknown | Unknown |
-| Conversion factors | Applied to stoichiometry | `EvalConversionFactorCodeGen` handles model/species-level conversion factors | Same |
-| Dynamic stoichiometry (`SpeciesReference` with `id`) | Tracked as parameter; substituted into ODE | `EvalVolatileStoichCodeGen` generates code for runtime stoichiometry | Same |
-
-### Roadrunner-Specific Divergences
-
-| ID | Flag | Element | Description |
-| --- | --- | --- | --- |
-| RR-A | `SPEC_CONFLICT` | AlgebraicRule | roadrunner LLVM backend throws `"Unable to support algebraic rules"` on any model containing an algebraicRule. The SBML L3v2 spec §4.8 requires interpreters to support algebraic rules. 102 L3v2 test cases (D6) would fail. |
-| RR-B | `SPEC_EXTENSION` | Species/Reaction | Optional conservation law reduction via `CONSERVED_MOIETIES` flag: L0-matrix null-space analysis rewrites dependent species as `dep = CM - Σ(L0ᵢⱼ · indⱼ)`. Introduces new global parameters (`CM_*`) not present in original SBML. Numerical behavior is equivalent but model structure is transformed. |
-| RR-C | `SPEC_CONFLICT` | Event / MathML | `delay` csymbol always throws `"Unable to support delay differential equations"`. Spec §3.4.6 defines delay as a valid MathML operator. 52 L3v2 test cases (D10) would fail. |
-
-### Architectural Summary
-
-pysbml and roadrunner reach the same ODE for most compliant L3v2 models. Key behavioral gaps:
-
-1. **Algebraic rules**: roadrunner rejects (throw); pysbml solves via sympy.
-2. **Delay**: roadrunner rejects (throw); pysbml approximates via time-shift.
-3. **D4 heuristic**: pysbml auto-corrects traditional concentration/time kinetic laws; roadrunner does not need the heuristic because its amount-canonical representation with HOSU-based loading already yields the correct ODE (the compartment factor and the concentration conversion cancel).
-4. **Species variables**: pysbml exposes both `{k}_amount` and `{k}_conc` as named model variables; roadrunner only exposes the amount internally (concentration is derived at read time and not a named variable).
-5. **Conservation laws**: roadrunner can optionally reduce ODE dimension via moiety analysis; pysbml cannot.
-
----
-
-
-
----
-
-## Template for future libraries
-
-When adding a new library, add a `## LibraryName` section with:
-
-1. **Source / version** being compared
-2. **Architecture** (one sentence: how it converts SBML to executable form)
-3. **Feature-by-feature table** (same rows as the matrix above)
-4. **Library-specific divergences** table:
-
-| ID | Flag | Element | Description |
-| --- | --- | --- | --- |
-| XX-A | `SPEC_CONFLICT/SPEC_SILENT/SPEC_EXTENSION` | Element | What it does vs what spec says |
-
-5. **Architectural summary** (bullet list of key differences from pysbml/spec)
+Add library-specific divergence IDs (e.g. `TF-A`, `TF-B`) to the element's **Divergences** table with the `Library` column filled in.
