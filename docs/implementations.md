@@ -11,22 +11,23 @@ Add a new `### LibraryName` block inside each element when comparing more tools.
 
 ## Feature Matrix
 
-| Feature                         | pysbml                                             | roadrunner                                           |
-| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------- |
-| Internal species storage        | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time |
-| HOSU effect                     | Selects one of ~8 `_handle_*` dispatch paths       | Affects load/store conversion only                   |
-| Algebraic rules                 | `sympy.solve` → assignment rule (D6)               | **Throws** (RR-A)                                    |
-| Conservation law reduction      | None                                               | Optional L0-matrix moiety analysis (RR-B)            |
-| Kinetic law compartment factor  | D4 auto-strip heuristic                            | None needed (HOSU loading cancels compartment)       |
-| EventAssignment to HOSU=false   | Multiply by compartment (D8)                       | Multiply by compartment at store                     |
-| Rate rule + dynamic compartment | Product rule correction (D5)                       | Same product rule                                    |
-| rateOf csymbol                  | Sentinel + sympy substitution (D9)                 | Native LLVM IR codegen with quotient-rule            |
-| delay csymbol                   | Time-shift approximation (D10)                     | **Throws** (RR-C)                                    |
-| No initialAmount/initialConc    | 0.0 + amount-vs-conc heuristic (D1)                | 0.0 + `LOG_WARNING`                                  |
-| Constraints                     | Silently ignored (D7)                              | Unknown                                              |
-| fast=true reaction              | QSS reduction + deferred events (D3/D11)           | Unknown                                              |
-| Conversion factors              | Applied to stoichiometry                           | EvalConversionFactorCodeGen                          |
-| Dynamic stoichiometry           | SpeciesRef → parameter                             | EvalVolatileStoichCodeGen                            |
+| Feature                         | pysbml                                             | roadrunner                                           | copasi                                                          |
+| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- |
+| Internal species storage        | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time | Concentration-canonical; amount derived as `conc × vol`         |
+| HOSU effect                     | Selects one of ~8 `_handle_*` dispatch paths       | Affects load/store conversion only                   | HOSU=true → multiply by vol in kinetic laws, divide elsewhere   |
+| Algebraic rules                 | `sympy.solve` → assignment rule (D6)               | **Throws** (RR-A)                                    | **Silently ignores** (CP-A)                                     |
+| Conservation law reduction      | None                                               | Optional L0-matrix moiety analysis (RR-B)            | None                                                            |
+| Kinetic law compartment factor  | D4 auto-strip heuristic                            | None needed (HOSU loading cancels compartment)       | Divides ALL kinetic laws by vol at import (CP-F)                |
+| EventAssignment to HOSU=false   | Multiply by compartment (D8)                       | Multiply by compartment at store                     | Direct assignment (concentration is native)                     |
+| EventAssignment to HOSU=true    | Direct (amount is native)                          | Direct (amount is native)                            | Divide by compartment (amount → concentration)                  |
+| Rate rule + dynamic compartment | Product rule correction (D5)                       | Same product rule                                    | Not documented                                                  |
+| rateOf csymbol                  | Sentinel + sympy substitution (D9)                 | Native LLVM IR codegen with quotient-rule            | Auxiliary parameter workaround (CP-C)                           |
+| delay csymbol                   | Time-shift approximation (D10)                     | **Throws** (RR-C)                                    | Auxiliary parameter workaround (CP-B)                           |
+| No initialAmount/initialConc    | 0.0 + amount-vs-conc heuristic (D1)                | 0.0 + `LOG_WARNING`                                  | Unknown                                                         |
+| Constraints                     | Silently ignored (D7)                              | Unknown                                              | Warns and ignores (CP-D)                                        |
+| fast=true reaction              | QSS reduction + deferred events (D3/D11)           | Unknown                                              | Converted to normal reaction, no QSS (CP-E)                     |
+| Conversion factors              | Applied to stoichiometry                           | EvalConversionFactorCodeGen                          | Unknown                                                         |
+| Dynamic stoichiometry           | SpeciesRef → parameter                             | EvalVolatileStoichCodeGen                            | Stoichiometric expression map                                   |
 
 ### Library Architectures
 
@@ -35,6 +36,9 @@ SBML → sympy ODE/algebraic system via two-stage pipeline (parse: libsbml → d
 
 **roadrunner** — `ref/roadrunner/source/` (LLVM backend)
 JIT-compiles SBML to native machine code via LLVM IR. Amount-canonical species storage; concentration derived at read/write boundaries.
+
+**copasi** — `ref/copasi/copasi/sbml/SBMLImporter.cpp`
+SBML → COPASI internal model (CModel). Concentration-canonical species storage throughout. Kinetic laws divided by compartment volume at import; all internal ODEs track concentration, not amount.
 
 ---
 
@@ -62,9 +66,13 @@ for each FunctionDefinition f with args (a1, ..., an) and body B:
 
 Functions inlined at JIT compile time. No divergences noted.
 
+### copasi
+
+`createCFunctionFromFunctionDefinition()` and `createCFunctionFromFunctionTree()` (line 1345/1424). Functions mapped to COPASI CFunction objects. COPASI detects functions annotated with special URIs (RATE, RNORMAL, RUNIFORM, RGAMMA, RPOISSON) and replaces them with built-in stochastic distribution functions. Time-dependent functions are detected and time is added as an extra parameter (line 1501).
+
 ### Divergences
 
-None.
+None from spec. COPASI's stochastic-distribution mapping is a proprietary extension not visible to models that don't use those annotations.
 
 ---
 
@@ -87,6 +95,10 @@ None.
 ### roadrunner
 
 Units treated as annotation only. No divergences noted.
+
+### copasi
+
+Units extracted and stored on CModelValue and CCompartment objects via `setUnitExpression()`. Non-integer spatial dimensions trigger warnings but are rounded down (lines 1576–1580). No runtime unit enforcement.
 
 ### Divergences
 
@@ -122,6 +134,10 @@ for each Compartment c:
 ### roadrunner
 
 Constant compartments optimized at JIT compile time. Non-constant compartments tracked in model data. No divergences noted.
+
+### copasi
+
+`createCCompartmentFromCompartment()` (line 1545). Spatial dimensions stored on CCompartment; defaults to 3D if missing. For SBML L1/L2, compartments with `spatialDimensions=0` imply `hasOnlySubstanceUnits=true` for contained species (lines 1698–1703). No divergences from L3v2 spec noted.
 
 ### Divergences
 
@@ -360,6 +376,25 @@ tmodel.variables[k] = Variable(value=initial_concentration)  # raw
 
 **No initialAmount/initialConc:** Injects 0.0 and emits `LOG_WARNING`. Uses HOSU to determine amount vs concentration units; no co-reactant heuristic.
 
+### copasi
+
+`createCMetabFromSpecies()` (line 1641). COPASI uses **concentration-canonical** storage (CMetab stores concentration as the primary quantity).
+
+**Storage and HOSU:**
+
+| Aspect                 | copasi                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| Storage                | Concentration-canonical: CMetab stores concentration; amount derived as `conc × vol`               |
+| HOSU effect            | HOSU=true → species tracked in `mSubstanceOnlySpecies` map (line 1659); expressions compensated    |
+| HOSU=true in kinetic laws | Multiplied by compartment volume via `multiplySubstanceOnlySpeciesByVolume()` (line 6666)     |
+| HOSU=true elsewhere    | Divided by compartment volume (rules, events, initial assignments — lines 6416, 7434, 5695–5710)  |
+| HOSU=false             | No conversion; concentration is native everywhere                                                   |
+| Boundary species       | `constant=true` or `boundaryCondition=true` → status FIXED (line 1691)                             |
+
+**Initial values:** `setInitialValues()` (line 6113). If `initialAmount` given, multiplied by `Quantity2NumberFactor` (line 6209) to get particle number then stored as concentration. If `initialConcentration` given, stored directly.
+
+**EventAssignment:** For HOSU=true species, the assignment expression (which is in amount units per spec) is divided by compartment volume before storing as concentration (lines 7422–7445). HOSU=false species receive direct assignment. A proprietary `http://copasi.org/eventAssignment` annotation can mark assignments as particle numbers, bypassing the division.
+
 ### Divergences
 
 | ID  | Flag            | Library | Description                                                                                                                                                                                                                                                           |
@@ -403,6 +438,10 @@ for each Parameter p:
 
 Parameters stored in `GlobalParameters` array; constant parameters optimized at JIT compile time. No divergences noted.
 
+### copasi
+
+`createCModelValueFromParameter()` (line 3320). Creates a COPASI CModelValue per parameter; units stored via `setUnitExpression()`. No divergences from spec noted.
+
 ### Divergences
 
 None observed.
@@ -433,6 +472,10 @@ for each InitialAssignment ia targeting symbol s:
 
 Initial assignments evaluated at model initialization via JIT-compiled code. No divergences noted.
 
+### copasi
+
+`importInitialAssignments()` (line 6324). Expressions preprocessed, object names replaced, time nodes converted to initial time (lines 6372–6376). For HOSU=true species or zero-dimensional compartments, the expression is divided by compartment volume (lines 6411–6427). For species references (L3), initial assignments stored in `mStoichiometricExpressionMap` for stoichiometry handling (lines 6381–6394).
+
 ### Divergences
 
 None observed.
@@ -459,6 +502,10 @@ for each AssignmentRule ar:
 ### roadrunner
 
 Assignment rules compiled to JIT code evaluated at every ODE step. No divergences noted.
+
+### copasi
+
+`importSBMLRule()` detects `SBML_ASSIGNMENT_RULE` and calls `importRuleForModelEntity()` (line 5577). For HOSU=true species, the expression is divided by volume (lines 5695–5710). Rules on species references (L3) are converted to stoichiometric expression storage rather than assignment rules.
 
 ### Divergences
 
@@ -491,6 +538,10 @@ for each RateRule rr targeting variable k:
 ### roadrunner
 
 Same product rule applied in `EvalRateRuleRatesCodeGen`. Identical result to pysbml for D5.
+
+### copasi
+
+Rate rules detected via `importSBMLRule()` with `SBML_RATE_RULE` (line 5334). Same HOSU handling as assignment rules. Rate rules on species references are skipped (line 5377).
 
 ### Divergences
 
@@ -525,12 +576,17 @@ for each AlgebraicRule ar:
 
 LLVM backend throws `"Unable to support algebraic rules"` on any model containing an algebraicRule. The legacy C generator ignores them. 102 L3v2 test cases (D6) are affected.
 
+### copasi
+
+`importSBMLRule()` (line 5341): any rule that is neither ASSIGNMENT_RULE nor RATE_RULE sets `mUnsupportedRuleFound = true` (line 5343) and returns. **Algebraic rules are silently ignored** — no attempt to solve or convert them.
+
 ### Divergences
 
 | ID   | Flag            | Library    | Description                                                                                                                                                               |
 | ---- | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D6   | `SPEC_SILENT`   | pysbml     | Spec requires exactly one undetermined variable but does not specify the algorithm. pysbml uses `sympy.solve`, which may fail for nonlinear rules or produce multiple solutions. |
 | RR-A | `SPEC_CONFLICT` | roadrunner | LLVM backend throws `"Unable to support algebraic rules"`. Spec §4.8 requires interpreters to support algebraic rules.                                                    |
+| CP-A | `SPEC_CONFLICT` | copasi     | Sets `mUnsupportedRuleFound=true` and returns; algebraic rules silently not processed. Spec §4.8 requires support.                                                        |
 
 ---
 
@@ -557,11 +613,16 @@ for each Constraint c:
 
 Behavior not determined from source review.
 
+### copasi
+
+`createCModelFromSBMLDocument()` (line 911): if `sbmlModel->getNumConstraints() > 0`, issues `MCSBML + 49` warning. Code comment: "TODO: Since we don't have constraints yet, there is no code here." Constraints are warned about and ignored.
+
 ### Divergences
 
-| ID  | Flag             | Library | Description                                                                                                                                               |
-| --- | ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D7  | `SPEC_EXTENSION` | pysbml  | Constraints parsed but silently ignored at transform time. Spec says interpreter *may* warn or halt on violation. pysbml issues no warning at solve time. |
+| ID   | Flag             | Library | Description                                                                                                                                               |
+| ---- | ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D7   | `SPEC_EXTENSION` | pysbml  | Constraints parsed but silently ignored at transform time. Spec says interpreter *may* warn or halt on violation. pysbml issues no warning at solve time. |
+| CP-D | `SPEC_EXTENSION` | copasi  | Constraints warned about at import time but not processed or checked at solve time.                                                                       |
 
 ---
 
@@ -660,6 +721,18 @@ for each species k:
 - **Dynamic stoichiometry:** `EvalVolatileStoichCodeGen`. Same result.
 - **`fast=true`:** Behavior not determined from source review.
 
+### copasi
+
+`createCReactionFromReaction()` (line 1809).
+
+**Kinetic law normalization (CP-F):** For single-compartment reactions, the entire kinetic law is divided by the compartment volume at import (`divideByVolume()`, line 2358; manual insertion at lines 2361–2370). COPASI works with concentration/time rates internally; dividing a correctly-written extent/time law (which includes an explicit volume factor) yields the correct concentration/time rate. For HOSU=true species appearing in kinetic laws, the species identifier is multiplied by volume via `multiplySubstanceOnlySpeciesByVolume()` (line 3679) to convert from concentration storage to amount units.
+
+**`fast=true` (CP-E):** The `fast` attribute is read; the reaction is stored in `mFastReactions` (line 1860) and the flag is removed from the SBML reaction. No QSS reduction is performed — fast reactions are treated as normal reactions.
+
+**Local parameters:** Handled directly in the kinetic law. Local parameters appearing inside `delay()` expressions are promoted to global parameters (lines 7830–7917).
+
+**Dynamic stoichiometry:** SpeciesReference initial assignments stored in `mStoichiometricExpressionMap` for later processing.
+
 ### Divergences
 
 | ID   | Flag             | Library    | Description                                                                                                                                                                                                                                                   |
@@ -667,7 +740,9 @@ for each species k:
 | D3   | `SPEC_EXTENSION` | pysbml     | `fast=True` triggers full QSS reduction with conservation-law-based stoichiometry correction. L3v2 spec §4.11 explicitly removed `fast`.                                                                                                                      |
 | D4   | `SPEC_SILENT`    | pysbml     | `rxn_had_compartment` heuristic: pysbml auto-detects and auto-corrects traditional concentration/time kinetic laws. Not described in spec; not needed by roadrunner.                                                                                           |
 | D11  | `SPEC_EXTENSION` | pysbml     | Deferred QSS: when a fast reaction is inactive at t=0, species kept as state variable; event assignments injected to snap to QSS when the fast reaction activates.                                                                                            |
-| RR-B | `SPEC_EXTENSION` | roadrunner | Optional conservation law reduction: L0-matrix null-space analysis rewrites dependent species as `dep = CM - Σ(L0ᵢⱼ · indⱼ)`. Introduces `CM_*` parameters not in original SBML. Numerical behavior equivalent; model structure transformed. |
+| RR-B | `SPEC_EXTENSION` | roadrunner | Optional conservation law reduction: L0-matrix null-space analysis rewrites dependent species as `dep = CM - Σ(L0ᵢⱼ · indⱼ)`. Introduces `CM_*` parameters not in original SBML. Numerical behavior equivalent; model structure transformed.                 |
+| CP-E | `SPEC_EXTENSION` | copasi     | `fast=true` reactions converted to normal reactions; no QSS semantics. Only the reaction ID is stored in `mFastReactions` for informational purposes.                                                                                                         |
+| CP-F | `SPEC_SILENT`    | copasi     | ALL kinetic laws divided by compartment volume at import. COPASI uses concentration/time rates throughout (not spec's extent/time). For correctly-written L3v2 kinetic laws (which include an explicit volume factor), the division cancels correctly. For traditional concentration/time kinetic laws without the volume factor, the result is incorrect. pysbml handles this via heuristic (D4); COPASI does not detect the pattern. |
 
 ---
 
@@ -766,15 +841,29 @@ For each SBMLDelay(target_expr, delay_amount):
 - **`rateOf` csymbol:** Fully implemented in LLVM codegen. Reconstructs rate from stoichiometry × kinetic laws; quotient-rule correction for HOSU=false species in dynamic compartment. Equivalent to pysbml D9.
 - **`delay` csymbol:** Always throws `"Unable to support delay differential equations"`. No fallback. 52 L3v2 test cases (D10) affected.
 
+### copasi
+
+`importEvents()` (line 7118) and `importEvent()` (line 7153).
+
+**Trigger/Priority/Delay:** `initialValue` → `fireAtInitialTime` (line 7209); `persistent` → `persistentTrigger` (line 7218); priority imported if present (lines 7260–7288); `useValuesFromTriggerTime` maps to `delayAssignment` (line 7292).
+
+**EventAssignment species handling:** HOSU=false species receive direct assignment (concentration is native). HOSU=true species: assignment expression (in amount units per spec) divided by compartment volume before storing as concentration (lines 7422–7445). A proprietary `http://copasi.org/eventAssignment` annotation can override this: if present and the expression is a division, the division is dropped (lines 7380–7390).
+
+**`delay()` csymbol (CP-B):** `replaceDelayAndRateOfInReaction()` and `find_local_parameters_in_delay()` handle delays in kinetic laws. Delay expressions trigger creation of a global auxiliary parameter with an assignment rule based on the delay expression. Local parameters inside delay expressions are promoted to global parameters (lines 7830–7917). Not a native DDE solver.
+
+**`rateOf()` csymbol (CP-C):** When `rateOf(reaction)` is detected, COPASI creates a global parameter with ID `rateOf_<reactionId>` and status ASSIGNMENT, initialized to 0 (lines 2309–2327). The reference is replaced with the parameter name; an assignment rule is created to give the parameter the correct rate expression.
+
 ### Divergences
 
 | ID   | Flag             | Library    | Description                                                                                                                                                                                                                                        |
 | ---- | ---------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D8   | `SPEC_SILENT`    | pysbml     | EventAssignment to `hasOnlySubstanceUnits=false` species: spec §4.12.5 does not specify the concentration→amount conversion. pysbml multiplies by compartment. roadrunner does the same at store time (identical result).                           |
-| D9   | `SPEC_SILENT`    | pysbml     | `rateOf` csymbol is an L3v2 package feature (not L3v2 Core). Both pysbml and roadrunner implement it; neither rejects it. pysbml via sympy substitution; roadrunner via LLVM codegen with quotient-rule.                                           |
+| D8   | `SPEC_SILENT`    | pysbml     | EventAssignment to `hasOnlySubstanceUnits=false` species: spec §4.12.5 does not specify the concentration→amount conversion. pysbml multiplies by compartment. roadrunner does the same at store time.                                              |
+| D9   | `SPEC_SILENT`    | pysbml     | `rateOf` csymbol is an L3v2 package feature (not L3v2 Core). Both pysbml and roadrunner implement it natively; copasi via auxiliary parameter. None reject it.                                                                                      |
 | D10  | `SPEC_EXTENSION` | pysbml     | `delay(x, d)` in kinetic laws / derived rules: spec §4.12.4 defines Delay only within Events. pysbml resolves `SBMLDelay` sentinels in ANY expression via time-shift substitution. True DDEs raise `NotImplementedError`.                           |
 | D12  | `SPEC_SILENT`    | pysbml     | `_handle_conc_boundary`: when a compartment EventAssignment fires without assigning the species, pysbml auto-conserves amount via `{k}_conc_new = {k}_conc_old * C_old / C_new`. Spec does not specify this conservation behavior.                  |
 | RR-C | `SPEC_CONFLICT`  | roadrunner | `delay` csymbol always throws `"Unable to support delay differential equations"`. Spec §3.4.6 defines delay as a valid MathML operator. 52 L3v2 test cases (D10) would fail.                                                                        |
+| CP-B | `SPEC_SILENT`    | copasi     | `delay()` in kinetic laws: converted to auxiliary global parameter + assignment rule at import. Not a native DDE implementation; only an approximation for static contexts.                                                                          |
+| CP-C | `SPEC_SILENT`    | copasi     | `rateOf()` converted to auxiliary global parameter `rateOf_<id>` with an assignment rule. Workaround rather than native support. Equivalent result for compliant models.                                                                            |
 
 ---
 
