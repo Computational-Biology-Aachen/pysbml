@@ -295,9 +295,15 @@ def codegen(model: tdata.Model) -> str:
             source.append(unpack)
         for dname in derived_in_order:
             source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
-        source.append(
-            f"{INDENT}return float({codegen_expr(cast(sympy.Expr, event.trigger))}) - 0.5"
-        )
+        trigger_expr = cast(sympy.Expr, event.trigger)
+        if isinstance(trigger_expr, (sympy.StrictGreaterThan, sympy.GreaterThan)):
+            # Continuous: positive when true, zero at boundary — avoids step-function bisection loop
+            trigger_code = codegen_expr(trigger_expr.args[0] - trigger_expr.args[1])
+        elif isinstance(trigger_expr, (sympy.StrictLessThan, sympy.LessThan)):
+            trigger_code = codegen_expr(trigger_expr.args[1] - trigger_expr.args[0])
+        else:
+            trigger_code = f"float({codegen_expr(trigger_expr)}) - 0.5"
+        source.append(f"{INDENT}return float({trigger_code})")
         source.append(f"_event_{event_name}_trigger.terminal = True")
         source.append(f"_event_{event_name}_trigger.direction = 1")
 

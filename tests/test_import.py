@@ -103,6 +103,7 @@ def _simulate_events(
     y_cur = np.array(y0, dtype=float)
     t_cur = float(t_arr[0])
     recorded_states: list[np.ndarray] = []
+    armed = [True] * len(events)
     pending: list[
         tuple[
             float,
@@ -138,15 +139,30 @@ def _simulate_events(
         for idx in event_indices:
             enqueue(idx, trigger_state)
 
+        # Use >= -tolerance for firing events (at the zero-crossing boundary) so their
+        # trigger is treated as True. Use strict > 0 for non-firing events whose trigger
+        # value 0 is the boundary of a strict condition (> vs >=): treating 0 as True
+        # would suppress chain reactions (e.g. maxcheck with |Q-R| > maxdiff stays
+        # "True" even when abs(Q-R) == maxdiff == 0, preventing the False->True
+        # transition that fires it after Qinc raises |Q-R|).
+        firing_set = set(event_indices)
         prev_trig = {
-            i: triggers[i](fire_time, updated_state) > 0 for i in range(len(events))
+            i: (
+                triggers[i](fire_time, updated_state) >= -tolerance
+                if i in firing_set
+                else triggers[i](fire_time, updated_state) > 0
+            )
+            for i in range(len(events))
         }
 
         while queue:
             _, _, idx, cap = queue.pop(0)
 
             persistent = events[idx][3]
-            if not persistent and triggers[idx](fire_time, updated_state) <= 0:
+            # Non-persistent events are cancelled if trigger has gone False in current state.
+            # Use < -tolerance (not < 0) to avoid floating-point cancellation when the
+            # trigger evaluates to a tiny negative value (e.g. -1.7e-18) at a zero-crossing.
+            if not persistent and triggers[idx](fire_time, updated_state) < -tolerance:
                 continue
 
             use_values_from_trigger_time = events[idx][6]
@@ -177,7 +193,15 @@ def _simulate_events(
                 old, new = prev_trig[i], new_trig[i]
                 if not old and new:
                     enqueue(i, updated_state)
-                elif old and not new and not events[i][3]:
+                elif (
+                    old
+                    and triggers[i](fire_time, updated_state) < -tolerance
+                    and not events[i][3]
+                ):
+                    # Only cancel non-persistent events whose trigger is clearly False
+                    # (< -tolerance), not those whose trigger is exactly 0 (still at the
+                    # zero-crossing boundary, e.g. Rinc2 when only Qinc fired and reset2
+                    # wasn't changed — Rinc2 should still fire).
                     queue[:] = [(p, o, j, c) for p, o, j, c in queue if j != i]
             prev_trig = new_trig
 
@@ -224,13 +248,22 @@ def _simulate_events(
             )
         return new_state
 
+    # Events already True at t=0 with initialValue=True start disarmed.
+    # Use >= -tolerance so continuous triggers at exactly the boundary (value=0) are
+    # treated as True, matching the step-function trigger behaviour (0.5 > 0).
+    for idx, event in enumerate(events):
+        if event[2] and triggers[idx](t_cur, y_cur) >= -tolerance:
+            armed[idx] = False
+
     y0_state = y_cur.copy()
     t0_events = [
         idx
         for idx, event in enumerate(events)
-        if not event[2] and triggers[idx](t_cur, y_cur) > 0
+        if not event[2] and triggers[idx](t_cur, y_cur) >= -tolerance
     ]
     if t0_events:
+        for idx in t0_events:
+            armed[idx] = False
         y_cur = process_triggered_events(
             event_indices=t0_events,
             fire_time=t_cur,
@@ -254,10 +287,16 @@ def _simulate_events(
             if segment_end <= t_cur + tolerance:
                 t_cur = segment_end
             else:
+                # Re-arm events whose trigger has reset clearly negative.
+                # Threshold is atol to stop Zeno sequences (infinite event firings
+                # converging to a point where trigger barely dips below zero).
+                for idx in range(len(events)):
+                    if not armed[idx] and triggers[idx](t_cur, y_cur) < -atol:
+                        armed[idx] = True
                 available_event_indices = [
                     idx
                     for idx, trigger in enumerate(triggers)
-                    if trigger(t_cur, y_cur) <= 0
+                    if armed[idx] and trigger(t_cur, y_cur) <= 0
                 ]
                 available_triggers = [triggers[idx] for idx in available_event_indices]
                 try:
@@ -299,19 +338,37 @@ def _simulate_events(
                             first_event_y = np.asarray(event_y[0], dtype=float).copy()
 
                     if first_event_y is not None:
+                        # Fire all available events whose trigger is at or near zero at
+                        # the crossing time. Continuous triggers evaluate to exactly 0
+                        # at the zero-crossing; step-function triggers to 0.5. scipy
+                        # dense-output interpolation may leave the value at -epsilon,
+                        # so use >= -tolerance rather than >= 0.
                         triggered_events = [
                             idx
                             for idx in available_event_indices
-                            if triggers[idx](first_event_t, first_event_y) > 0
+                            if triggers[idx](first_event_t, first_event_y) >= -tolerance
                         ]
-                        y_cur = process_triggered_events(
-                            event_indices=triggered_events,
-                            fire_time=first_event_t,
-                            trigger_state=first_event_y,
-                            current_state=first_event_y,
-                        )
-                        t_cur = first_event_t
-                        y_cur = apply_pending_with_chain(t_cur, y_cur)
+                        if triggered_events:
+                            for idx in triggered_events:
+                                armed[idx] = False
+                            y_cur = process_triggered_events(
+                                event_indices=triggered_events,
+                                fire_time=first_event_t,
+                                trigger_state=first_event_y,
+                                current_state=first_event_y,
+                            )
+                            t_cur = first_event_t
+                            y_cur = apply_pending_with_chain(t_cur, y_cur)
+                        else:
+                            # Advance state to event time even when no event fires.
+                            # Step-function triggers at the exact threshold evaluate to
+                            # -0.5 (condition is not strictly True), failing >= -tolerance.
+                            # By setting t_cur = first_event_t (not +tolerance) and
+                            # updating y_cur, the next integration starts from the crossing
+                            # point; the trigger immediately goes positive (the condition
+                            # becomes True just past the threshold) and fires.
+                            y_cur = first_event_y
+                            t_cur = first_event_t
                         continue
 
                 if len(sol.t) > 0:
@@ -416,14 +473,6 @@ def routine(
 # Justified: each group represents a known, well-scoped limitation rather than a
 # silent wrong answer.  Fixing one group at a time is safer than hiding failures.
 _SKIP: dict[int, str] = {
-    # --- Stiff ODE / solver timeout ---
-    # The model itself transforms correctly; the issue is scipy's RK45 stiffness.
-    # Fix: switch to LSODA or set a stiffer solver before removing from this list.
-    372: "stiff ODE timeout",
-    385: "stiff ODE timeout",
-    744: "stiff ODE timeout",
-    885: "stiff ODE timeout",
-    966: "stiff ODE timeout",
     # --- Event priority re-evaluation not supported ---
     # SBML requires dynamic priority re-evaluation after each event fires within a
     # simultaneous batch.  Our simulator enqueues priorities once; 934 requires
@@ -434,6 +483,10 @@ _SKIP: dict[int, str] = {
     # integrator step; scipy sees the same sign at both endpoints of the step and
     # misses the zero-crossing.
     1511: "narrow-range AND trigger missed by scipy adaptive step",
+    # --- High-frequency event model: ~100k event firings over t=0..1001 ---
+    # Model fires Rinc/Qinc events every 0.01s for 1001s → ~100k solve_ivp calls.
+    # Python event simulator overhead exceeds 60s test timeout; model logic is correct.
+    966: "high-frequency event model exceeds test timeout (~100k event firings)",
     # --- Event simulation timeout ---
     # Event trigger/assignment logic for these models produces an infinite loop in the
     # simulator.  The codegen itself is likely fine; needs work in _simulate_events.
