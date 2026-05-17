@@ -11,24 +11,24 @@ Add a new `### LibraryName` block inside each element when comparing more tools.
 
 ## Feature Matrix
 
-| Feature                         | pysbml                                             | roadrunner                                           | copasi                                                        | pysces                                                                     | SBMLToolkit.jl                                                    |
-| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Internal species storage        | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time | Concentration-canonical; amount derived as `conc × vol`       | Mode-switched: conc unless ANY HOSU=true → amount-canonical for all (PS-F) | Amount-canonical; initialConc converted at import                 |
-| HOSU effect                     | Selects one of ~8 `_handle_*` dispatch paths       | Affects load/store conversion only                   | HOSU=true → multiply by vol in kinetic laws, divide elsewhere | Triggers model-wide amount mode if any species has HOSU=true               | HOSU=false → divide by vol in kinetic law; HOSU=true → raw amount |
-| Algebraic rules                 | `sympy.solve` → assignment rule (D6)               | **Throws** (RR-A)                                    | **Silently ignores** (CP-A)                                   | Silently ignores with error log (PS-C)                                     | Algebraic constraint `0 ~ rhs` (MTK DAE)                          |
-| Conservation law reduction      | None                                               | Optional L0-matrix moiety analysis (RR-B)            | None                                                          | None                                                                       | None                                                              |
-| Kinetic law compartment factor  | D4 auto-strip heuristic                            | None needed (HOSU loading cancels compartment)       | Divides ALL kinetic laws by vol at import (CP-F)              | None (assumes rates already correct)                                       | HOSU=false species divided by vol (`extensive_kinetic_math`)      |
-| EventAssignment to HOSU=false   | Multiply by compartment (D8)                       | Multiply by compartment at store                     | Direct assignment (concentration is native)                   | No conversion applied                                                      | Multiply by compartment                                           |
-| EventAssignment to HOSU=true    | Direct (amount is native)                          | Direct (amount is native)                            | Divide by compartment (amount → concentration)                | No conversion applied                                                      | Direct (amount is native)                                         |
-| Rate rule + dynamic compartment | Product rule correction (D5)                       | Same product rule                                    | Not documented                                                | No product rule                                                            | Product rule applied (D(S) ~ C·f + S/C·D(C))                      |
-| rateOf csymbol                  | Sentinel + sympy substitution (D9)                 | Native LLVM IR codegen with quotient-rule            | Auxiliary parameter workaround (CP-C)                         | Not implemented                                                            | Native: `rateOf` → `D()` (MTK derivative)                         |
-| delay csymbol                   | Time-shift approximation (D10)                     | **Throws** (RR-C)                                    | Auxiliary parameter workaround (CP-B)                         | Stripped from kinetic law, not replaced (PS-E)                             | **Throws** (JL-B)                                                 |
-| No initialAmount/initialConc    | 0.0 + amount-vs-conc heuristic (D1)                | 0.0 + `LOG_WARNING`                                  | Unknown                                                       | 0.0 (libsbml default, silent)                                              | 0 (SBML.jl default)                                               |
-| Constraints                     | Silently ignored (D7)                              | Unknown                                              | Warns and ignores (CP-D)                                      | Fatal error; model not loaded (PS-B)                                       | **Throws** (JL-A)                                                 |
-| InitialAssignment               | Supported                                          | Supported                                            | Supported                                                     | Fatal error; model not loaded (PS-A)                                       | Supported                                                         |
-| fast=true reaction              | QSS reduction + deferred events (D3/D11)           | Unknown                                              | Converted to normal reaction, no QSS (CP-E)                   | Ignored with warning                                                       | Silently treated as normal reaction                               |
-| Conversion factors              | Applied to stoichiometry                           | EvalConversionFactorCodeGen                          | Unknown                                                       | Not implemented                                                            | Not implemented                                                   |
-| Dynamic stoichiometry           | SpeciesRef → parameter                             | EvalVolatileStoichCodeGen                            | Stoichiometric expression map                                 | stoichiometryMath rejected                                                 | Local params promoted to global                                   |
+| Feature                         | pysbml                                             | roadrunner                                           | copasi                                                        | pysces                                                                     | SBMLToolkit.jl                                                    | amici                                                                              | SBMLToolbox                                                                                   | sbscl                                                                                         | morpheus                                                                             | vcell                                                                                            |
+| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Internal species storage        | Dual: explicit `{k}_amount` + `{k}_conc` variables | Amount-canonical; concentration derived at read time | Concentration-canonical; amount derived as `conc × vol`       | Mode-switched: conc unless ANY HOSU=true → amount-canonical for all (PS-F) | Amount-canonical; initialConc converted at import                 | Dual: concentration by default (dC/dt); HOSU=true → amount-canonical (dA/dt)      | Amount in ODE state vector; `isConcentration` flag selects output scaling             | Flexible dual: `isAmount[]` per-species; conversion at evaluation time in SpeciesValue        | Dual: amount internal; concentration derived as `amount/vol` in expressions          | Concentration-canonical; initialAmount → conc at import (÷ compartment); no explicit amount var |
+| HOSU effect                     | Selects one of ~8 `_handle_*` dispatch paths       | Affects load/store conversion only                   | HOSU=true → multiply by vol in kinetic laws, divide elsewhere | Triggers model-wide amount mode if any species has HOSU=true               | HOSU=false → divide by vol in kinetic law; HOSU=true → raw amount | `"amount": HOSU` flag selects ODE type; `_transform_dxdt_to_concentration()` for non-HOSU | `hasAmountOnly=1` → raw amount; else KL divided by compartment in ODE output (ST-C)  | SpeciesValue converts at eval time based on HOSU × isAmount flag combination                  | HOSU=true → formula_symbol = species name; else formula_symbol = `amount/vol`        | **Not branched at import** (VC-A); all species handled uniformly; HOSU stored but unused        |
+| Algebraic rules                 | `sympy.solve` → assignment rule (D6)               | **Throws** (RR-A)                                    | **Silently ignores** (CP-A)                                   | Silently ignores with error log (PS-C)                                     | Algebraic constraint `0 ~ rhs` (MTK DAE)                          | Supported (L3+ only; L2 raises SBMLException) via SUNDIALS DAE                    | Converted to AssignmentRule if analytically isolatable; **throws** if not (ST-B)    | Converted to assignment via AlgebraicRuleConverter; throws if overdetermined (SC-A)           | **Throws** SBMLConverterException (MO-A)                                             | Silently ignored with warning "not handled at this time" (VC-B)                                 |
+| Conservation law reduction      | None                                               | Optional L0-matrix moiety analysis (RR-B)            | None                                                          | None                                                                       | None                                                              | Automatic optional; default enabled; L0-matrix approach (AM-D)                    | None                                                                                  | None                                                                                          | None                                                                                 | None                                                                                             |
+| Kinetic law compartment factor  | D4 auto-strip heuristic                            | None needed (HOSU loading cancels compartment)       | Divides ALL kinetic laws by vol at import (CP-F)              | None (assumes rates already correct)                                       | HOSU=false species divided by vol (`extensive_kinetic_math`)      | Division by compartment in `dx_dt` in de_export.py; no explicit heuristic needed  | KL divided by compartment for `isConcentration=1` species in ODE output (ST-C)      | KL divided by compartment in processVelocities for concentration-canonical species            | Conversion factors applied; no explicit KL/compartment division                      | Deferred to GeneralLumpedKinetics/codegen layer; no explicit D4-style heuristic at import       |
+| EventAssignment to HOSU=false   | Multiply by compartment (D8)                       | Multiply by compartment at store                     | Direct assignment (concentration is native)                   | No conversion applied                                                      | Multiply by compartment                                           | Direct concentration assignment (native; concentration is canonical state)         | Direct assignment; no concentration→amount conversion (ST-A)                         | Direct Y assignment; compartment change triggers species concentration rebalance               | Multiply by compartment (lines 1131–1132)                                            | Direct assignment; no HOSU-based conversion (VC-I)                                              |
+| EventAssignment to HOSU=true    | Direct (amount is native)                          | Direct (amount is native)                            | Divide by compartment (amount → concentration)                | No conversion applied                                                      | Direct (amount is native)                                         | Direct amount assignment (native; amount is canonical state for HOSU=true)         | Direct amount assignment                                                              | Direct amount assignment                                                                      | Direct amount assignment                                                             | Direct assignment                                                                                |
+| Rate rule + dynamic compartment | Product rule correction (D5)                       | Same product rule                                    | Not documented                                                | No product rule                                                            | Product rule applied (D(S) ~ C·f + S/C·D(C))                      | `_transform_dxdt_to_concentration()` applies product rule for non-HOSU species     | No product rule                                                                       | Product rule via changeRate correction (RateRuleValue.java line 129)                          | Post-processing adjusts changeRate for compartment species (lines 671–713)           | Product rule not explicitly applied at import (VC-F)                                            |
+| rateOf csymbol                  | Sentinel + sympy substitution (D9)                 | Native LLVM IR codegen with quotient-rule            | Auxiliary parameter workaround (CP-C)                         | Not implemented                                                            | Native: `rateOf` → `D()` (MTK derivative)                         | Native support via `_process_sbml_rate_of()` and `_rateof_to_dummy()`             | Not implemented (undefined function call)                                             | Native via ASTNodeInterpreter.rateOf(); reads changeRate[] or rate rule RHS                   | Symbol renaming: `rateOf(X)` → `X.rate` (L3v2 only)                                 | **Not supported**; no code found; likely throws at ODE generation (VC-E)                        |
+| delay csymbol                   | Time-shift approximation (D10)                     | **Throws** (RR-C)                                    | Auxiliary parameter workaround (CP-B)                         | Stripped from kinetic law, not replaced (PS-E)                             | **Throws** (JL-B)                                                 | **Throws** SBMLException for non-zero delays (AM-A)                               | **Throws** "Cannot deal with delayed events" (ST-D)                                  | Native via DelayValueHolder; evaluates at t−delay                                             | Auxiliary DelayProperty/DelayVariable elements (MO-B)                                | Warning logged; expression **replaced with 0.0**; model continues with broken expression (VC-D) |
+| No initialAmount/initialConc    | 0.0 + amount-vs-conc heuristic (D1)                | 0.0 + `LOG_WARNING`                                  | Unknown                                                       | 0.0 (libsbml default, silent)                                              | 0 (SBML.jl default)                                               | 0.0 silent default (`get_species_initial()` line 3434)                            | **Throws** "species concentration not provided or assigned by rule" (ST-E)           | Majority-vote default 0.0 (determineMajorSpeciesAttributes); silent                           | Default 0.0; silent                                                                  | Silently defaults to 0.0                                                                        |
+| Constraints                     | Silently ignored (D7)                              | Unknown                                              | Warns and ignores (CP-D)                                      | Fatal error; model not loaded (PS-B)                                       | **Throws** (JL-A)                                                 | Silently ignored; no code found for `getListOfConstraints()`                      | **Throws** "Cannot deal with constraints." (ST-F)                                    | Evaluated every step via listener; violations logged; simulation continues                    | Silently dropped with log message (MO-C)                                             | **Throws** SBMLImportException (VC-C)                                                           |
+| InitialAssignment               | Supported                                          | Supported                                            | Supported                                                     | Fatal error; model not loaded (PS-A)                                       | Supported                                                         | Supported                                                                          | Supported; evaluated at t=0                                                           | Supported; iterative evaluation until Y stabilizes                                            | Supported; applied during element processing                                         | Supported; two-phase parse + apply after all objects created                                    |
+| fast=true reaction              | QSS reduction + deferred events (D3/D11)           | Unknown                                              | Converted to normal reaction, no QSS (CP-E)                   | Ignored with warning                                                       | Silently treated as normal reaction                               | **Throws** SBMLException (AM-C)                                                   | **Throws** "Cannot deal with fast reactions" (ST-G)                                  | Supported via separate fast-reaction solver phase                                             | Silently treated as normal reaction                                                  | Supported via annotation flag; marked for QSS treatment                                         |
+| Conversion factors              | Applied to stoichiometry                           | EvalConversionFactorCodeGen                          | Unknown                                                       | Not implemented                                                            | Not implemented                                                   | Applied to stoichiometry (line 1389); model-level and species-level               | **Throws** "Cannot deal with conversion factors" (ST-H)                              | Applied via conversionFactors[] per species                                                   | Applied to stoichiometry                                                             | Applied to stoichiometry (line 1250)                                                            |
+| Dynamic stoichiometry           | SpeciesRef → parameter                             | EvalVolatileStoichCodeGen                            | Stoichiometric expression map                                 | stoichiometryMath rejected                                                 | Local params promoted to global                                   | `_get_list_of_species_references()` (line 3437); SpeciesRef handled               | stoichiometryMath converted to formula                                                | Via JSBML stoichiometryMath handling                                                          | stoichiometryMath converted to formula                                               | stoichiometryMath parsed as expression (lines 1110–1118 for reactants)                          |
 
 ### Library Architectures
 
@@ -46,6 +46,21 @@ SBML → Core2 object representation (dictionaries `__sDict__`, `__nDict__`, `__
 
 **SBMLToolkit.jl** — `ref/SBMLToolkit.jl/src/` (Julia)
 SBML → `Catalyst.ReactionSystem` / `ModelingToolkit.ODESystem`. Amount-canonical; `initialConcentration` converted to amount at import via `SBML.initial_amounts(model, convert_concentrations=true)`. Events become `ContinuousVectorCallback` pairs.
+
+**amici** — `ref/amici/src/amici/sbml_import.py` (Python, C++ backend)
+SBML → SUNDIALS ODE/DAE C++ code via libsbml symbolic parsing. Dual per-species canonical form (HOSU flag selects amount vs concentration state); compartment volume factors deferred to C++ codegen (`de_export.py`). Conservation law reduction default-enabled. Events handled by SUNDIALS root-finding; delays and non-persistent triggers not supported.
+
+**SBMLToolbox** — `ref/SBMLToolbox/src/Simulation/` (MATLAB)
+SBML → MATLAB ODE function files (`WriteODEFunction.m`, `WriteEventHandlerFunction.m`, `WriteEventAssignmentFunction.m`). Single-compartment only; amounts in state vector with concentration derived at output. Many unsupported features (delays, conversion factors, multiple compartments, constraints) throw explicit MATLAB errors.
+
+**sbscl** — `ref/sbscl/src/main/java/org/simulator/sbml/` (Java)
+SBML → interpreted ODE system via `SBMLinterpreter.java` + `EquationSystem.java`. Flexible per-species canonical form (`isAmount[]` array); full event support including delays and priority; algebraic rules converted via `AlgebraicRuleConverter`; constraints evaluated via listener pattern. Native delay() and rateOf() support.
+
+**morpheus** — `ref/morpheus/gui/sbml_converter.cpp` (C++)
+SBML → MorpheusML XML format via 1428-line converter. Designed for spatial cell-based modeling; SBML import is best-effort translation. Algebraic rules throw; event priorities dropped; delay() and rateOf() supported via auxiliary variable workarounds.
+
+**vcell** — `ref/vcell/vcell-core/src/main/java/org/vcell/sbml/vcell/SBMLImporter.java` (Java)
+SBML → VCell BioModel/SimulationContext objects via 4581-line multi-pass importer. Concentration-canonical; all species handled uniformly without HOSU branching. Annotation-rich design preserves VCell-specific metadata. Algebraic rules and rateOf not supported; delay() replaced with 0.0 workaround.
 
 ---
 
@@ -85,6 +100,26 @@ Functions inlined at JIT compile time. No divergences noted.
 
 FunctionDefinitions are inlined by preprocessing (`convert_promotelocals_expandfuns`, line 126 in `systems.jl`) before symbolic parsing begins. If a lambda expression somehow reaches the symbolic layer, `utils.jl` line 22 throws `ErrorException("Symbolics.jl does not support lambda functions")` as a safety net. In practice, all FunctionDefinitions are inlined and no error is raised.
 
+### amici
+
+All FunctionDefinitions are preprocessed via `SBMLFunctionDefinitionConverter()` before the main import loop (lines 249–253 in `sbml_import.py`). Functions are inlined into kinetic laws and rules at the libsbml level before any symbolic parsing begins. No function objects are created or stored in the generated C++ code.
+
+### SBMLToolbox
+
+Functions parsed and emitted as nested MATLAB functions at the end of the generated ODE file (WriteODEFunction.m lines 530–553). Arguments extracted from the lambda expression; body written as a named MATLAB function. No recursion detection or argument count validation; inlining is purely textual substitution.
+
+### sbscl
+
+`FunctionValue.computeDoubleValue()` (astnode/FunctionValue.java lines 45–163) evaluates function calls by mapping argument values into `argumentValues[]` (line 91) and recursively evaluating the body with the index mapping. Proper per-call scoping; no global function-object storage.
+
+### morpheus
+
+FunctionDefinitions converted to MorpheusML `<Function>` elements (lines 940–959 in sbml_converter.cpp). Body expression converted via `formulaToString()`. Inlining code at lines 978–980 is commented out, suggesting potential limitations with recursive function replacement.
+
+### vcell
+
+Functions inlined at parse time via `LambdaFunction[]` array (`addFunctionDefinitions()`, lines 526–574 in SBMLImporter.java). Arguments renamed with unique suffix to avoid symbol collision during substitution. All FunctionDefinition identifiers are substituted into kinetic laws and rule expressions before model assembly. No divergences from spec.
+
 ### Divergences
 
 None.
@@ -122,6 +157,26 @@ Units stored in `__uDict__` with multiplier, exponent, scale, and kind (lines 14
 ### SBMLToolkit.jl
 
 Units carried in SBML.jl metadata but not converted to symbolic constraints or validation checks. Annotation-only; no runtime enforcement.
+
+### amici
+
+Unit parsing disabled entirely via `setParseUnits(L3P_NO_UNITS)` on the libsbml reader (lines 195–197 in `sbml_import.py`). UnitDefinitions are not extracted, stored, or validated. No runtime unit enforcement.
+
+### SBMLToolbox
+
+Units completely ignored during ODE generation. No unit definitions are extracted, enforced, or validated; no unit-driven species scaling occurs.
+
+### sbscl
+
+Units annotation-only (SBMLinterpreter.java constructor docstring, line 86: "Note that currently, units are not considered."). Unit information in ASTNodes is stored but ignored during evaluation.
+
+### morpheus
+
+Units discarded via recursive `removeUnits()` helper (lines 60–67 in sbml_converter.cpp), called before every math-to-string conversion. Import dialog explicitly warns "Units are discarded." No enforcement.
+
+### vcell
+
+Unit definitions extracted and stored in `sbmlUnitIdentifierHash` (`createSBMLUnitSystemForVCModel()`, lines 2068–2182). Predefined SBML unit names pre-populated (lines 2086–2149). Used for dimensionality tracking only; no runtime enforcement or dimensional analysis.
 
 ### Divergences
 
@@ -170,11 +225,32 @@ Compartments stored in `__compartments__` with size, dimensions, and optional ou
 
 Constant compartments → `create_param(k)` (line 86 in `utils.jl`). Dynamic compartments → `create_var(k, IV; isbcspecies=true)` (line 87). Zero-dimensional compartments always treated as parameters (line 39–43 in `rules.jl`). Product rule applied automatically when a species RateRule references a dynamic compartment.
 
+### amici
+
+Compartments stored as scalar symbolic values (lines 1088–1106 in `sbml_import.py`). Constant compartments become C++ parameter entries. Non-constant compartments governed by RateRule are promoted to AMICI state variables (species-like objects). Volume scaling in `d(amount)/dt = v/C` is applied in the C++ code generation layer (`de_export.py`), not at SBML import time.
+
+### SBMLToolbox
+
+**Single-compartment only**: throws MATLAB error if the model has more than one compartment (WriteODEFunction.m line 107). **Constant compartments only**: throws if constant=false (line 78). Compartment size written as a numeric constant in the generated ODE file (line 253); used only to convert amounts to concentrations for species output.
+
+### sbscl
+
+Compartments stored in the Y vector before species entries (EquationSystem.java lines 500–511) with `constantHash` tracking mutability. Dynamic compartments supported via rate rules. When compartment size changes via an assignment rule, `updateSpeciesConcentrationByCompartmentChange()` (lines 848–863) rescales all contained non-amount species: `Y[s] = Y[s] * oldSize / newSize`.
+
+### morpheus
+
+Constant compartments → MorpheusML `<Constant>`; dynamic (constant=false) → `<Variable>` (lines 627–661). InitialAssignments and AssignmentRules applied to compartment value (lines 635–640). Dynamic compartments trigger post-processing compensation logic that adjusts species ODE rates for volume changes (lines 671–713).
+
+### vcell
+
+Two-pass handler in `addCompartments()` (lines 230–396): first pass creates VCell Structure objects (Feature/Membrane); second pass parses compartment size expressions. Dynamic compartments supported if a RateRule targets the compartment ID (line 382). Outside topology resolved via annotation or `outside` attribute (lines 291–340).
+
 ### Divergences
 
-| ID   | Flag          | Library | Description                                                                                                                               |
-| ---- | ------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| PS-G | `SPEC_SILENT` | pysces  | COMP_FUDGE_FACTOR rescales compartments smaller than 1e-6. Non-standard heuristic not described in spec; affects initial species amounts. |
+| ID   | Flag             | Library     | Description                                                                                                                               |
+| ---- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| PS-G | `SPEC_SILENT`    | pysces      | COMP_FUDGE_FACTOR rescales compartments smaller than 1e-6. Non-standard heuristic not described in spec; affects initial species amounts. |
+| ST-I | `SPEC_CONFLICT`  | SBMLToolbox | Single-compartment models only; models with multiple compartments throw a MATLAB error. Spec §4.5 requires support for multiple compartments. |
 
 ---
 
@@ -350,14 +426,37 @@ tmodel.derived[k]            = {k}_conc * compartment
 
 `SBML.initial_amounts(model, convert_concentrations=true)` (line 196 in `systems.jl`). Amount-canonical; initialConcentration converted to `initialAmount = C₀ × conc` at import. HOSU=false species divided by compartment in kinetic laws (`extensive_kinetic_math`, line 59 in `rules.jl`). HOSU=true species left unchanged. Boundary species added to reaction product lists as pseudo-products (line 118–126 in `reactions.jl`) to prevent net consumption. EventAssignment to HOSU=false species multiplied by compartment (line 22 in `events.jl`).
 
+### amici
+
+Dual per-species canonical form selected by HOSU flag (lines 1108–1182 in `sbml_import.py`). `_get_species_initial()` (line ~3289–3316) resolves `initialAmount` vs `initialConcentration`, converting between them using compartment size. HOSU=false → concentration-canonical ODE (`dC/dt`), amount derived as `A = C × vol`. HOSU=true → amount-canonical ODE (`dA/dt`), concentration derived as `C = A / vol`. `_transform_dxdt_to_concentration()` applies the product rule for HOSU=false species in dynamic compartments. `boundaryCondition=true` → species excluded from ODE state vector. Neither initialAmount nor initialConcentration → 0.0 silent default.
+
+### SBMLToolbox
+
+Amount in ODE state vector; `isConcentration` flag computed in AnalyseSpecies.m (lines 143–177) based on which initial value is set. HOSU=true (`hasAmountOnly=1`) → amount-canonical ODE; else KL divided by compartment at output. `boundaryCondition=true` → reaction rate returns '0' (GetRateLawsFromReactions.m line 80). Neither initialAmount nor initialConc → **throws** "species concentration not provided or assigned by rule". EventAssignment direct assignment without concentration→amount conversion (ST-A).
+
+### sbscl
+
+Per-species flexible dual via `isAmount[]` array (EquationSystem.java lines 544–569). `SpeciesValue.computeDoubleValue()` (lines 122–173) converts based on four HOSU × isAmount combinations: amount+notHOSU → divide by C; notAmount+HOSU → multiply by C; else identity. Neither initial value → `determineMajorSpeciesAttributes()` majority-vote default 0.0 (lines 1267–1291). `boundaryCondition=true` → `zeroChange=true` (lines 791–796), excluded from ODE stoichiometry. EventAssignment to compartment triggers `updateSpeciesConcentrationByCompartmentChange()`.
+
+### morpheus
+
+Dual: amount stored internally; concentration derived as formula expression (`addSBMLSpecies()`, lines 810–898). HOSU=true → formula_symbol = species name (raw amount); else formula_symbol = `amount/vol`. `initialConcentration` takes priority over `initialAmount` (line 852); neither → default 0. `boundaryCondition=true` → ODE generation skipped (lines 1294, 1371). EventAssignment to amount-canonical species: multiply by compartment (lines 1131–1132).
+
+### vcell
+
+Concentration-canonical: `addSpecies()` (line 1551) converts `initialAmount` → concentration by dividing by compartment size at import. HOSU **not branched** at import (VC-A): all species stored as `SpeciesContext` uniformly. `boundaryCondition=true` → species clamped (line 1628). Neither initial value → silently defaults to 0.0. EventAssignment direct assignment without HOSU-based conversion (VC-I).
+
 ### Divergences
 
-| ID   | Flag            | Library | Description                                                                                                                                                                                                                                                                                                        |
-| ---- | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| D1   | `SPEC_SILENT`   | pysbml  | Species with neither `initialAmount` nor `initialConcentration`: spec says value is "unknown or from external source" (§4.6.4). pysbml injects 0.0 using a co-reactant heuristic to guess amount vs concentration. Tests: t676, t688 → amount; t1513 → concentration.                                              |
-| D2   | `SPEC_SILENT`   | pysbml  | `_handle_amount_boundary_has_substance_units` (test 1123): source FIXME — despite `hasOnlySubstanceUnits=True`, derives `{k}_conc` and forces `rxn_had_compartment=True`. Spec does not specify this interaction.                                                                                                  |
+| ID   | Flag            | Library     | Description                                                                                                                                                                                                                                                                                                        |
+| ---- | --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D1   | `SPEC_SILENT`   | pysbml      | Species with neither `initialAmount` nor `initialConcentration`: spec says value is "unknown or from external source" (§4.6.4). pysbml injects 0.0 using a co-reactant heuristic to guess amount vs concentration. Tests: t676, t688 → amount; t1513 → concentration.                                              |
+| D2   | `SPEC_SILENT`   | pysbml      | `_handle_amount_boundary_has_substance_units` (test 1123): source FIXME — despite `hasOnlySubstanceUnits=True`, derives `{k}_conc` and forces `rxn_had_compartment=True`. Spec does not specify this interaction.                                                                                                  |
 | D13  | ~~`SPEC_CONFLICT`~~ **FIXED** | pysbml | `constant=true`, `hasOnlySubstanceUnits=false`, initialized via `initialConcentration` in a non-constant compartment. **Fixed:** now stores `{k}_amount = initConc × C(0)` as constant parameter and derives `k = {k}_amount / C(t)`. Cases 01117, 01118 pass. |
-| PS-F | `SPEC_SILENT`   | pysces  | Model-wide HOSU mode: if ANY species has `hasOnlySubstanceUnits=true`, ALL species switch to amount-canonical. Spec defines HOSU per-species; pysces treats it as a global model flag.                                                                                                                             |
+| PS-F | `SPEC_SILENT`   | pysces      | Model-wide HOSU mode: if ANY species has `hasOnlySubstanceUnits=true`, ALL species switch to amount-canonical. Spec defines HOSU per-species; pysces treats it as a global model flag.                                                                                                                             |
+| ST-A | `SPEC_SILENT`   | SBMLToolbox | EventAssignment to HOSU=false species: direct assignment without concentration→amount conversion. Same as pysces; contrast pysbml/roadrunner which multiply by compartment.                                                                                                                                         |
+| ST-E | `SPEC_CONFLICT` | SBMLToolbox | Species with neither `initialAmount` nor `initialConcentration` throws MATLAB error "species concentration not provided or assigned by rule". Spec §4.6.4 says value is "unknown"; tools should default to 0.0 or use heuristics, not abort.                                                                       |
+| VC-A | `SPEC_SILENT`   | vcell       | HOSU flag not branched at import; all species handled uniformly as SpeciesContext objects. Species that have `hasOnlySubstanceUnits=true` receive no special treatment during ODE generation. Spec §4.6.2 requires HOSU to affect how species identifiers appear in formulas.                                       |
 
 ---
 
@@ -400,6 +499,26 @@ Parameters extracted via `getListOfParameters()`, stored in `init_par` dict (lin
 
 `constant=true` → `create_param(k)`. `constant=false` AND (`seemsdefined` OR is event assignment target) → `create_var(k, IV; isbcspecies=true)` (line 153–160 in `utils.jl`). Event-assigned parameters get zero-rate ODEs: `D(var) ~ 0` (line 100 in `systems.jl`).
 
+### amici
+
+Parameters classified into four categories (lines 1306–1420 in `sbml_import.py`): `Fixed` (constant=true, no rule) → C++ `p[]` array; `Dynamic` (constant=false with RateRule) → state variable; `Expression` (constant=false with AssignmentRule) → observable/derived expression; parameter governed by EventAssignment → promoted to state variable. Constant parameters without any rule become C++ compile-time constants.
+
+### SBMLToolbox
+
+Constant parameters → literal numeric values in ODE file (WriteODEFunction.m line 261). Non-constant parameters added to ODE state vector alongside species (lines 237, 300–301). Event assignments to non-constant parameters allowed.
+
+### sbscl
+
+Parameters stored in Y vector (EquationSystem.java lines 593–604) with `constantHash` tracking mutability. Local parameters of kinetic laws updated via `KineticLaw.getMath().updateVariables()` (line 628). Event-assigned parameters allowed.
+
+### morpheus
+
+Constant → MorpheusML `<Constant>` (line 913 in sbml_converter.cpp); constant=false → `<Variable>` or `<Property>`. InitialAssignments and AssignmentRules applied to parameter value (lines 925–929). Local reaction parameters renamed with scheme `{param}_{reaction_number}` if conflicting with globals (lines 1187–1221).
+
+### vcell
+
+`ModelParameter` objects created in `addParameters()` (lines 586–950 in SBMLImporter.java). Expressions resolved in deferred two-phase pattern. Constant parameters immutable at runtime except via event assignments. Spatial-model parameters (DiffusionCoefficient, AdvectionCoefficient, BoundaryCondition) mapped to `SpeciesContextSpec` entries rather than ModelParameter.
+
 ### Divergences
 
 None observed.
@@ -433,6 +552,26 @@ Initial assignments evaluated at model initialization via JIT-compiled code. No 
 ### SBMLToolkit.jl
 
 Evaluated at t=0; stored in `initial_assignments` dict (line 232–235 in `systems.jl`). Overrides `u0map` and `parammap`. May reference other species/parameters; handled via `initial_conditions` dict to permit non-parameter references (lines 133–138).
+
+### amici
+
+Topologically sorted and evaluated at t=0 (lines 2259–2296 in `sbml_import.py`). May reference parameters, compartments, and species. Overrides initial amounts/concentrations and stoichiometric SpeciesReference values. Evaluation order determined by dependency analysis before C++ code generation.
+
+### SBMLToolbox
+
+Evaluated at t=0 via `Substitute()` on the SBML math expression (GetSpecies.m lines 97–110). Result replaces the species/parameter initial value. Applied before AssignmentRules. No iterative re-evaluation for cyclic dependencies.
+
+### sbscl
+
+Iterative evaluation loop in `SBMLinterpreter.init()` (lines 447–490) runs until the Y vector stabilizes. Handles cyclic dependencies between initial assignments and assignment rules. Targets: species, parameters, compartments, stoichiometric SpeciesReferences.
+
+### morpheus
+
+Applied inline during species/compartment/parameter element processing (lines 883–895 for species, 635–640 for compartments, 924–929 for parameters). Note: dedicated `addSBMLInitialAssignments()` function (lines 1398–1414) exists but is never called; all InitialAssignment handling is inline.
+
+### vcell
+
+Two-phase: parse expressions in `parseAssignmentAndInitialAssignmentExpressions()` (lines 1288–1316), apply to target entries after all objects are created (lines 3023–3037). Handles species, parameters, compartment sizes, and SpeciesReference stoichiometry.
 
 ### Divergences
 
@@ -472,6 +611,26 @@ Detected via `rule.isAssignment()` (line 1984), stored in `__rules__` with type=
 ### SBMLToolkit.jl
 
 Converted to observed-variable equation `var ~ rhs` (line 11 in `rules.jl`). Added to ODESystem as an algebraic constraint. RHS substituted into `defs` dict (line 76 in `systems.jl`). Volume correction applied for HOSU=false species (line 80–82 in `rules.jl`).
+
+### amici
+
+Converted to observable or algebraic expressions (lines 1662–1704 in `sbml_import.py`). Targets removed from the ODE state vector; their values computed from the rule expression at every time step. HOSU handling follows the same per-species amount/concentration classification as reaction species. Stoichiometric SpeciesReference targets of assignment rules are also supported.
+
+### SBMLToolbox
+
+Written as explicit formula lines in the ODE file (WriteODEFunction.m lines 305–314). For species with assignment rules and no reactions or rate rules, the rule derivative is computed via symbolic differentiation `DifferentiateRule` (lines 427–429) and used as the ODE rate.
+
+### sbscl
+
+`AssignmentRuleValue` objects evaluated in `processRules()` (SBMLinterpreter.java lines 636–695) in a loop for `numberOfAssignmentRulesLoops` iterations. Topological ordering applied in EquationSystem (lines 1033–1094). If rule targets a compartment, dependent species concentrations rebalanced (lines 675–681).
+
+### morpheus
+
+AssignmentRules → MorpheusML `<Equation>` elements (lines 1021–1046 in sbml_converter.cpp). For amount-canonical species with concentration-based rules, value multiplied by compartment (lines 1027–1029). Constant species with assignment rules skipped (lines 1011–1012).
+
+### vcell
+
+Two-phase: parse (lines 1295–1305), create VCell AssignmentRule and mark target species as clamped (lines 1340–1378 in SBMLImporter.java). Clamped species excluded from ODE state vector; governed entirely by assignment rule expression. StructureSize (compartment) assignment rules update compartment size and may adjust relative structure sizes (lines 1379–1388).
 
 ### Divergences
 
@@ -514,6 +673,26 @@ Converted to `D(var) ~ rhs` (line 14 in `rules.jl`). Variable created with `isbc
 D(S) ~ C * f + S/C * D(C)   # where f = rhs, C = compartment
 ```
 
+### amici
+
+RateRule targets promoted to AMICI state variables with `dx_dt = rule_expr` (lines 1184–1270 in `sbml_import.py`). `_transform_dxdt_to_concentration()` applies the product rule for HOSU=false species in dynamic compartments, equivalent to the D5 correction. Parameters and compartments governed by RateRules are similarly promoted to state variable entries in the C++ model.
+
+### SBMLToolbox
+
+Rate rule formulas become direct `d/dt` entries in ODE output (WriteODEFunction.m lines 409–416). No compartment volume division applied to rate rules. **No product rule for dynamic compartments.**
+
+### sbscl
+
+`RateRuleValue` objects set `changeRate[target]` directly to rule RHS (RateRuleValue.java lines 122–123). **Product rule applied for compartments**: if compartment has a rate rule and contains non-amount species, `changeRate[s] = -changeRate[c] * Y[s] / Y[c]` (line 129), correctly handling concentration changes from volume changes.
+
+### morpheus
+
+RateRules → MorpheusML `<DiffEqn>` elements (lines 1049–1065 in sbml_converter.cpp). Rate direction (amount or concentration) tracked in `diffeqn_map` (line 1064). Post-processing (lines 671–713) adjusts species rates for dynamic compartment volume changes.
+
+### vcell
+
+Two-phase: parse (lines 1404–1414), create VCell RateRule and mark target as clamped (lines 1449–1465 in SBMLImporter.java). Product rule for dynamic compartments **not explicitly applied** in import code (VC-F); may be deferred to the kinetics/codegen layer.
+
 ### Divergences
 
 | ID  | Flag          | Library | Description                                                                                                                                                                                                                                             |
@@ -555,14 +734,38 @@ Detected via `rule.isAlgebraic()` (line 1988); entry added to `__Errors__` (line
 
 Converted to algebraic constraint `0 ~ rhs` (line 8 in `rules.jl`). Included in ODESystem as implicit DAE constraint; ModelingToolkit's solver handles it. Species in AlgebraicRules with zero net stoichiometry flagged as `isbcspecies=true` to prevent conservation law reduction (line 62–72 in `utils.jl`). Limited by MTK's DAE capabilities — complex nonlinear systems may fail at solve time.
 
+### amici
+
+Supported for L3 models via SUNDIALS IDA DAE solver (lines 1528–1662 in `sbml_import.py`). The algebraic rule `0 = f(...)` is added as a residual constraint to the DAE system. **L2 models**: raises `SBMLException("Algebraic rules are only supported for SBML L3.")`. The floating variable is identified symbolically but the constraint is solved numerically by SUNDIALS rather than analytically.
+
+### SBMLToolbox
+
+Converted to AssignmentRule if the equation can be analytically solved for one variable via `Rearrange()` (AnalyseSpecies.m lines 221–240). If the species also has reactions or rate rules, `ConvertedToAssignRule=0` and the rule is differentiated instead (WriteODEFunction.m line 452). Fails with MATLAB error if the equation cannot be isolated analytically.
+
+### sbscl
+
+`AlgebraicRuleConverter` (598 lines) converts algebraic rules to assignment rules using `OverdeterminationValidator` matching (EquationSystem.java line 1256). Throws `ModelOverdeterminedException` if system is overdetermined (line 1253). Successfully converted rules processed as assignment rules (lines 993–1025).
+
+### morpheus
+
+**Throws** `SBMLConverterException::SBML_ALGEBRAIC_RULE` immediately on encountering an algebraic rule (lines 1018–1020 in sbml_converter.cpp). No fallback or workaround.
+
+### vcell
+
+Silently ignored with VCLogger warning "Algebraic rules are not handled in the Virtual Cell at this time" (lines 2627–2636 in SBMLImporter.java). No exception thrown; model continues importing without the algebraic rule.
+
 ### Divergences
 
-| ID   | Flag            | Library    | Description                                                                                                                                                                      |
-| ---- | --------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D6   | `SPEC_SILENT`   | pysbml     | Spec requires exactly one undetermined variable but does not specify the algorithm. pysbml uses `sympy.solve`, which may fail for nonlinear rules or produce multiple solutions. |
-| RR-A | `SPEC_CONFLICT` | roadrunner | LLVM backend throws `"Unable to support algebraic rules"`. Spec §4.8 requires support.                                                                                           |
-| CP-A | `SPEC_CONFLICT` | copasi     | Sets `mUnsupportedRuleFound=true` and returns; algebraic rules silently not processed. Spec §4.8 requires support.                                                               |
-| PS-C | `SPEC_CONFLICT` | pysces     | Added to `__Errors__` and skipped; not stored or executed. Spec §4.9.2 requires support.                                                                                         |
+| ID   | Flag            | Library     | Description                                                                                                                                                                      |
+| ---- | --------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D6   | `SPEC_SILENT`   | pysbml      | Spec requires exactly one undetermined variable but does not specify the algorithm. pysbml uses `sympy.solve`, which may fail for nonlinear rules or produce multiple solutions. |
+| RR-A | `SPEC_CONFLICT` | roadrunner  | LLVM backend throws `"Unable to support algebraic rules"`. Spec §4.8 requires support.                                                                                           |
+| CP-A | `SPEC_CONFLICT` | copasi      | Sets `mUnsupportedRuleFound=true` and returns; algebraic rules silently not processed. Spec §4.8 requires support.                                                               |
+| PS-C | `SPEC_CONFLICT` | pysces      | Added to `__Errors__` and skipped; not stored or executed. Spec §4.9.2 requires support.                                                                                         |
+| ST-B | `SPEC_SILENT`   | SBMLToolbox | Converted to AssignmentRule only if analytically isolatable; throws MATLAB error if not. Partial support — equivalent of pysbml's `sympy.solve` fallback but without error recovery. |
+| SC-A | `SPEC_SILENT`   | sbscl       | Throws `ModelOverdeterminedException` if the algebraic system is overdetermined. Spec §4.9.2 requires that an overdetermined system be detected and reported as an error, so this matches spec intent. |
+| MO-A | `SPEC_CONFLICT` | morpheus    | Throws `SBMLConverterException` on any algebraic rule. Spec §4.9.2 requires support.                                                                                            |
+| VC-B | `SPEC_SILENT`   | vcell       | Silently ignored with warning message. Same behavior as copasi (CP-A) and pysces (PS-C); spec §4.9.2 requires support.                                                           |
 
 ---
 
@@ -598,6 +801,26 @@ Behavior not determined from source review.
 
 `"listOfConstraints" in xml` → `throw(ErrorException("SBML models with listOfConstraints are not yet implemented."))` (line 270 in `systems.jl`). Model rejected entirely at parse time.
 
+### amici
+
+No code found for processing `getListOfConstraints()` in `sbml_import.py`. Constraints are silently ignored at import with no warning or error.
+
+### SBMLToolbox
+
+Throws MATLAB error "Cannot deal with constraints." (WriteODEFunction.m line 171) on any model that has constraints. ODE generation aborted immediately.
+
+### sbscl
+
+Constraints fully supported at runtime. `ConstraintEvent`/`ConstraintListener` pattern (EquationSystem.java lines 1991–2019): each constraint's boolean math evaluated every ODE step (line 1995); violation triggers `processViolation()` on registered listeners. `SimpleConstraintListener` auto-registered (line 710); logs violations but does not halt simulation.
+
+### morpheus
+
+Silently dropped with logged message "Dropped unsupported SBML Constraint..." (`parseMissingFeatures()`, lines 1417–1427 in sbml_converter.cpp). No exception thrown.
+
+### vcell
+
+Throws `SBMLImportException` "VCell doesn't support Constraints at this time" (`addConstraints()`, lines 510–514 in SBMLImporter.java). Model import aborted.
+
 ### Divergences
 
 | ID   | Flag             | Library        | Description                                                                                                                             |
@@ -606,6 +829,9 @@ Behavior not determined from source review.
 | CP-D | `SPEC_EXTENSION` | copasi         | Constraints warned about at import time but not processed or checked at solve time.                                                     |
 | PS-B | `SPEC_CONFLICT`  | pysces         | Models with constraints are rejected entirely at import. Spec does not require rejecting models that contain constraints.               |
 | JL-A | `SPEC_CONFLICT`  | SBMLToolkit.jl | Throws ErrorException for any model with `listOfConstraints`. Spec allows warnings but does not require model rejection at parse time.  |
+| ST-F | `SPEC_CONFLICT`  | SBMLToolbox    | Throws MATLAB error for any model with constraints. Spec §4.10 allows warning or halting on violation; rejecting presence is stricter.  |
+| MO-C | `SPEC_EXTENSION` | morpheus       | Constraints silently dropped with log message. No runtime evaluation. Same behavior as pysbml and amici.                               |
+| VC-C | `SPEC_CONFLICT`  | vcell          | Throws SBMLImportException on presence of constraints. Same reasoning as JL-A / PS-B.                                                  |
 
 ---
 
@@ -652,6 +878,26 @@ Kinetic laws extracted via `getKineticLaw().getMath()` (line 1744) and converted
 
 `SBML.extensive_kinetic_math()` (line 8 in `reactions.jl`) converts concentration-based laws to extent-based by dividing HOSU=false species references by compartment. Local parameters promoted to global during preprocessing (`convert_promotelocals_expandfuns`). **Reversible reactions** (line 12–23 in `reactions.jl`): kinetic law split into forward and reverse components via symbolic expansion; warning issued if split is ambiguous. `fast=true` silently treated as normal reaction. Conversion factors not implemented.
 
+### amici
+
+Kinetic laws stored symbolically as-is; compartment volume scaling applied in the C++ code generation layer (`de_export.py`) rather than at import time (lines 1423–1493, 3027–3093 in `sbml_import.py`). Local parameters globalized with uniquified names. `fast=true` raises `SBMLException` (AM-C). Conversion factors applied to stoichiometry at line 1389. Dynamic stoichiometry (stoichiometryMath / SpeciesReference rules) handled via `_get_list_of_species_references()` (line 3437). Conservation law reduction enabled by default via L0-matrix analysis (AM-D).
+
+### SBMLToolbox
+
+KL divided by compartment for `isConcentration=1` species in ODE output (WriteODEFunction.m line 399): `xdot = (KL)/compartment`. fast=true → **throws** "Cannot deal with fast reactions". Conversion factors → **throws** "Cannot deal with conversion factors". Local parameters renamed with reaction ID (GetRateLawsFromReactions.m lines 140–145). stoichiometryMath converted to formula (lines 171–198).
+
+### sbscl
+
+KL rate divided by compartment in `processVelocities()` for concentration-canonical (non-amount, HOSU=false) species (lines 767–769). fast=true reactions evaluated only when `isProcessingFastReactions=true` (line 739). Conversion factors applied via `conversionFactors[]` (line 770). rateOf() and delay() natively supported. Dynamic stoichiometry via JSBML stoichiometryMath.
+
+### morpheus
+
+Kinetic law converted via `formulaToString()`. Species conversion factors applied to stoichiometry (lines 1288–1290, 1364–1366 in sbml_converter.cpp). fast=true not checked — treated as normal. Local parameters renamed if conflicting with globals (lines 1187–1221). stoichiometryMath converted to formula (lines 1265, 1357). Dynamic SpeciesReference stoichiometry stored as Variable nodes (lines 1249–1252).
+
+### vcell
+
+KL parsed via `getExpressionFromFormula()` and adjusted (lines 3252–3253 in SBMLImporter.java). `GeneralLumpedKinetics` vs `GeneralKinetics` chosen by spatial flag. Compartment factor deferred to kinetics codegen layer. fast=true → annotation flag, marked for QSS treatment. Conversion factors applied to stoichiometry (line 1250). delay() → warning + 0.0 replacement (lines 2468–2473). rateOf() not supported (VC-E).
+
 ### Divergences
 
 | ID   | Flag             | Library        | Description                                                                                                                                                                                   |
@@ -663,6 +909,13 @@ Kinetic laws extracted via `getKineticLaw().getMath()` (line 1744) and converted
 | CP-E | `SPEC_EXTENSION` | copasi         | `fast=true` converted to normal reaction; no QSS semantics.                                                                                                                                   |
 | CP-F | `SPEC_SILENT`    | copasi         | All kinetic laws divided by compartment vol at import. Correct for spec-compliant extent/time laws but wrong for traditional concentration/time laws without an explicit volume factor.       |
 | JL-E | `SPEC_SILENT`    | SBMLToolkit.jl | Reversible kinetic laws split into forward/reverse via symbolic expansion; may produce ambiguous or incorrect splits for non-standard rate law forms. Warning issued when split is ambiguous. |
+| AM-C | `SPEC_CONFLICT`  | amici          | `fast=true` raises `SBMLException`. L3v2 §4.11 does not define `fast`; per spec, presence is undefined behavior. AMICI treats it as an error rather than silently ignoring it.               |
+| AM-D | `SPEC_EXTENSION` | amici          | Automatic conservation law reduction via L0-matrix stoichiometric null-space analysis (lines 2371–2419). Default-enabled; introduces `tcl_*` moiety parameters not in the original SBML model. |
+| ST-C | `SPEC_SILENT`    | SBMLToolbox    | Kinetic law divided by compartment for concentration-canonical species (post-hoc in ODE output). Same effect as copasi (CP-F) but applied selectively per species rather than universally. |
+| ST-G | `SPEC_SILENT`    | SBMLToolbox    | fast=true throws MATLAB error. L3v2 §4.11 defines `fast` as removed (undefined behavior); throwing is stricter than ignoring but not explicitly forbidden.                                  |
+| ST-H | `SPEC_CONFLICT`  | SBMLToolbox    | Conversion factors throw MATLAB error. Spec §4.11.5 requires conversion factor support.                                                                                                      |
+| VC-D | `SPEC_SILENT`    | vcell          | delay() csymbol in kinetic laws: warning logged, expression replaced with 0.0. Model continues with an incorrect kinetic law. Spec §3.4.6 defines delay as valid MathML.                    |
+| VC-E | `SPEC_SILENT`    | vcell          | rateOf() csymbol not explicitly handled; no code in SBMLImporter.java. Likely throws at ODE generation. Spec §3.4.8 defines rateOf as valid (L3v2 package).                                 |
 
 ---
 
@@ -715,6 +968,26 @@ EventAssignment stored as raw variable→formula pairs; no amount/concentration 
 
 Events converted to `ContinuousVectorCallback` pairs (line 7 in `events.jl`): `[trigger_eq] => [effect_eqs]`. Passed to `ReactionSystem(..., continuous_events=cevs)` (line 146 in `systems.jl`). EventAssignment to HOSU=false: multiplied by compartment (line 21). Parameters not in reactions given `D(var) ~ 0` (line 96–102 in `systems.jl`). **`initialValue` and `persistent` not handled** — events always fire on upward crossing (line 36 warning). **`useValuesFromTriggerTime` not handled** — current values always used. **Delay throws** (JL-B). **Priority throws** (JL-C).
 
+### amici
+
+Events parsed with trigger, priority, useValuesFromTriggerTime, and EventAssignments (lines 1800–1936 in `sbml_import.py`). **Delays not supported**: any event with a non-zero delay raises `SBMLException` at lines 924–937 (AM-A). **Non-persistent events not supported**: `persistent=false` raises `SBMLException` (AM-B). Numeric priority stored; `useValuesFromTriggerTime` stored. EventAssignment direct concentration or amount assignment per HOSU flag (native; no multiply-by-compartment). Events handled by SUNDIALS root-finding in the generated C++ layer. `rateOf()` natively supported via `_process_sbml_rate_of()` and `_rateof_to_dummy()`.
+
+### SBMLToolbox
+
+Events processed in `WriteEventHandlerFunction.m` (lines 157–167): trigger converted to MATLAB zero-crossing condition. **`persistent=true` throws** "Cannot deal with persistent trigger" (lines 95–97, ST-J). **Delay throws** "Cannot deal with a delay in an event" (ST-D). Priority throws "Cannot deal with priority". `useValuesFromTriggerTime` not implemented — values always evaluated at execution time. `initialValue` not extracted. EventAssignment written as direct variable assignment in `WriteEventAssignmentFunction.m`; no HOSU amount/concentration conversion applied.
+
+### sbscl
+
+Full event support in `SBMLinterpreter.java` and `EquationSystem.java`. `persistent=false` events aborted when trigger returns false during delay period (lines 221–227 of `EquationSystem.java`). Delay → `delayedEvents` priority queue keyed by execution time (lines 229–241). Priority sorting applied at execution (lines 525–544). `useValuesFromTriggerTime=true` → values captured at trigger; `false` → recomputed at execution. EventAssignment to a compartment triggers species amount rebalance (lines 586–589). `initialValue` extracted and stored.
+
+### morpheus
+
+Events converted to MorpheusML `<Event>` elements in `sbml_converter.cpp`. Trigger → `<Condition>` element; `initialValue` → `history` attribute (lines 1089–1098). `persistent` → `persistent` attribute. Delay + `useValuesFromTriggerTime` → `compute-time` attribute (lines 1100–1116). **Priority dropped with warning** "Event priorities are not supported in Morpheus" (lines 1118–1121, MO-D). EventAssignment to amount-unit species: value multiplied by compartment volume (lines 1131–1132). No EventAssignment HOSU branching beyond the amount check.
+
+### vcell
+
+Events handled by `addEvents()` in `SBMLImporter.java` (lines 398–492), creating `BioEvent` objects. Trigger math and delay stored. `useValuesFromTriggerTime` stored. **`initialValue` not extracted** — always treated as false (VC-J). **`persistent` not extracted** — always treated as true (VC-G). **Priority not implemented** — silently dropped (VC-H). EventAssignment stored as direct variable→formula pairs with no HOSU amount/concentration conversion (VC-I). Events only imported for non-spatial models.
+
 ### Divergences
 
 | ID   | Flag             | Library        | Description                                                                                                                                                                                                                                    |
@@ -731,6 +1004,15 @@ Events converted to `ContinuousVectorCallback` pairs (line 7 in `events.jl`): `[
 | JL-B | `SPEC_CONFLICT`  | SBMLToolkit.jl | Delay in events throws `ErrorException`. Spec §4.12.4 defines delays as a required event feature.                                                                                                                                              |
 | JL-C | `SPEC_CONFLICT`  | SBMLToolkit.jl | Event priority throws `ErrorException`. Spec §4.12.3 defines priority as a valid event feature.                                                                                                                                                |
 | JL-D | `SPEC_SILENT`    | SBMLToolkit.jl | `trigger.initialValue` and `persistent` semantics not implemented; events always fire on upward crossing without initialValue consideration. Warning issued at line 36 in `events.jl`.                                                         |
+| AM-A | `SPEC_CONFLICT`  | amici          | Event delay raises `SBMLException`. Spec §4.12.4 defines delay as a required event feature.                                                                                                                                                    |
+| AM-B | `SPEC_CONFLICT`  | amici          | `persistent=false` triggers raise `SBMLException`. Spec §4.12.2 requires support for non-persistent triggers.                                                                                                                                  |
+| ST-D | `SPEC_CONFLICT`  | SBMLToolbox    | Event delay throws "Cannot deal with a delay in an event". Spec §4.12.4 defines delay as a required event feature.                                                                                                                             |
+| ST-J | `SPEC_CONFLICT`  | SBMLToolbox    | `persistent=true` throws "Cannot deal with persistent trigger". Spec §4.12.2 requires support for persistent triggers.                                                                                                                         |
+| MO-D | `SPEC_SILENT`    | morpheus       | Event priority silently dropped with warning "Event priorities are not supported in Morpheus". Spec §4.12.3 defines priority as a valid event feature; dropping changes execution order for simultaneous events.                                |
+| VC-G | `SPEC_CONFLICT`  | vcell          | `persistent` attribute not extracted from SBML; all events treated as persistent. Non-persistent event cancellation never occurs.                                                                                                               |
+| VC-H | `SPEC_SILENT`    | vcell          | Event priority silently dropped. Spec §4.12.3 defines priority; simultaneous events execute in arbitrary order.                                                                                                                                 |
+| VC-I | `SPEC_SILENT`    | vcell          | EventAssignment to species: no HOSU amount/concentration conversion. Spec §4.12.5 requires quantity type consistency. Assignments treated as direct variable writes.                                                                            |
+| VC-J | `SPEC_CONFLICT`  | vcell          | `trigger.initialValue` not extracted; always treated as false (trigger can fire at t=0 even when `initialValue=true`). Spec §4.12.2 defines `initialValue=true` as preventing t=0 firing.                                                     |
 
 ---
 
