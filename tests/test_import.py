@@ -185,6 +185,23 @@ def _simulate_events(
                 updated_state = apply_assignments(
                     updated_state, assign_fns[idx](fire_time, eval_state)
                 )
+                # SBML §4.12.8: re-evaluate priorities of remaining queue items using
+                # the current (post-assignment) state so order may change.
+                if queue:
+                    queue[:] = [
+                        (
+                            -(
+                                float(events[j][5](fire_time, updated_state))
+                                if events[j][5] is not None
+                                else 0.0
+                            ),
+                            o,
+                            j,
+                            c,
+                        )
+                        for _, o, j, c in queue
+                    ]
+                    queue.sort()
 
             new_trig = {
                 i: triggers[i](fire_time, updated_state) > 0 for i in range(len(events))
@@ -501,11 +518,6 @@ def routine(
 # Justified: each group represents a known, well-scoped limitation rather than a
 # silent wrong answer.  Fixing one group at a time is safer than hiding failures.
 _SKIP: dict[int, str] = {
-    # --- Event priority re-evaluation not supported ---
-    # SBML requires dynamic priority re-evaluation after each event fires within a
-    # simultaneous batch.  Our simulator enqueues priorities once; 934 requires
-    # re-sorting the queue after each assignment.
-    934: "dynamic event priority re-evaluation not supported",
     # --- Narrow-range AND trigger not detectable by scipy event detection ---
     # The trigger (0.18 < S1_conc < 0.19) spans a range narrower than the adaptive
     # integrator step; scipy sees the same sign at both endpoints and misses the crossing.
