@@ -184,11 +184,23 @@ def codegen(model: tdata.Model) -> str:
     # Variables with no ODE that have initial_assignments: module-level names set by
     # initial_assignments at import time (e.g. S5_amount = initConc * C(0) = 50).
     # Exposed via derived() so callers can read amounts like S5_amount.
-    # Variables without initial_assignments (value may be NaN) are excluded.
     frozen_var_names = sorted(
         name
         for name in model.variables
         if name not in set(variable_names) and name in model.initial_assignments
+    )
+
+    # Variables with no ODE, no assignment rule, and no initial_assignment — present
+    # in the model with a concrete initial value (e.g. boundary species with no rules).
+    # Included in derived() so no-ODE models expose all their declared quantities.
+    # Exclude NaN-valued variables (e.g. those defined only by algebraic rules).
+    static_var_names = sorted(
+        name
+        for name in model.variables
+        if name not in set(variable_names)
+        and name not in model.initial_assignments
+        and name not in exprs
+        and sympy.nan not in model.variables[name].value.atoms()
     )
 
     # Actual codegen
@@ -268,6 +280,7 @@ def codegen(model: tdata.Model) -> str:
         [
             f"{INDENT}return {{",
             *(f"{INDENT * 2}{name!r}: {name}," for name in model.parameters),
+            *(f"{INDENT * 2}{name!r}: {name}," for name in static_var_names),
             *(f"{INDENT * 2}{name!r}: {name}," for name in frozen_var_names),
             *(f"{INDENT * 2}{name!r}: {name}," for name in order),
             f"{INDENT}}}",

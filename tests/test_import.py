@@ -528,12 +528,6 @@ _SKIP: dict[int, str] = {
     # --- No ODE variables: derived() has no columns matching expected output ---
     # These models use SBML Hierarchical Model Composition (comp extension) or other
     # constructs that pysbml doesn't expose in derived(); no columns to compare.
-    1129: "no ODE: derived() no matching columns (comp extension)",
-    1135: "no ODE: derived() no matching columns (comp extension)",
-    1136: "no ODE: derived() no matching columns (comp extension)",
-    1149: "no ODE: derived() no matching columns (comp/empty math)",
-    1154: "no ODE: derived() no matching columns (comp extension)",
-    1162: "no ODE: derived() no matching columns (comp extension)",
     1186: "no ODE: derived() no matching columns (comp extension)",
     1187: "no ODE: derived() no matching columns (comp extension)",
     1188: "no ODE: derived() no matching columns (comp extension)",
