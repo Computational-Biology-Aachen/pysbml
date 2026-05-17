@@ -9,6 +9,7 @@ from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 import sympy
+from sympy.logic.boolalg import BooleanAtom as _SympyBooleanAtom
 
 from pysbml.parse import mathml
 
@@ -253,4 +254,8 @@ def _handle_node(
 
 def convert_mathml(node: mathml.Base, fns: dict[str, data.Expr]) -> sympy.Expr:
     """Convert a MathML AST node to a sympy expression, substituting known functions."""
-    return _handle_node(node=node, fns=fns)
+    result = _handle_node(node=node, fns=fns)
+    # Bare <true/> or <false/> in numeric context (e.g. kinetic law body) →  1 / 0
+    if isinstance(result, _SympyBooleanAtom):
+        return sympy.Integer(1) if result else sympy.Integer(0)
+    return result

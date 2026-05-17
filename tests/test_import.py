@@ -730,11 +730,6 @@ _SKIP: dict[int, str] = {
     1569: "QSS: all-fast system produces no ODE state variables",
     1571: "QSS: all-fast system produces no ODE state variables",
     1572: "QSS: all-fast system produces no ODE state variables",
-    # --- BooleanAtom in kinetic law not supported ---
-    # sympy raises TypeError when a bare True/False appears in an arithmetic
-    # expression.  Fix: add a BooleanAtom→{0,1} rewrite pass in mathml2sympy.
-    1288: "BooleanAtom in kinetic law not supported",
-    1290: "BooleanAtom in kinetic law not supported",
 }
 
 TEST_IDS = sorted(
