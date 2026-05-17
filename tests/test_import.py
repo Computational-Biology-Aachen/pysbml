@@ -429,9 +429,6 @@ _SKIP: dict[int, str] = {
     # simultaneous batch.  Our simulator enqueues priorities once; 934 requires
     # re-sorting the queue after each assignment.
     934: "dynamic event priority re-evaluation not supported",
-    # --- Complex multi-compartment models with unsupported patterns ---
-    1000: "complex multi-compartment model: unsupported pattern",
-    1121: "complex multi-compartment model: unsupported pattern",
     # --- Narrow-range AND trigger not detectable by scipy event detection ---
     # The trigger (0.18 < S1_conc < 0.19) spans a range narrower than the adaptive
     # integrator step; scipy sees the same sign at both endpoints of the step and

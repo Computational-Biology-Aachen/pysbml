@@ -586,39 +586,22 @@ def _handle_amount_boundary_has_substance_units(
 ) -> None:
     """Handle amount with boundary=True and has_substance_units=True.
 
-    A boundary condition means, per the spec (4.6.6), that the species is on the
-    boundary of the reaction system, and its amount is not determined by the reactions.
+    hasOnlySubstanceUnits=True means the species identifier in math always refers to
+    the amount (never concentration). Boundary means the amount is not changed by
+    reactions. So the species appears unchanged (as amount) in kinetic formulas.
 
-    According to the spec (4.6.5) the `hasOnlySubstanceUnits` allows choosing the
-    meaning intended for a species' identifier when the identifier appears in
-    mathematical expressions or as the subject of SBML rules or assignments.
-    If the value is true the unit of measurement is always interpreted as an amount.
-
-    In test 1123 we have
-        S1: only substance units = False
-        S3: only substance units = True
-
-        rxn J0 = S3 / 10 with stoichiometry S1: -1.0
-
-    Since by our logic S1 will give itself the stoichiometry S1: -comp, we need to ignore
-    the hasOnlySubstanceUnits logic and insert the concentration into the reaction
-
-    FIXME: why does this happen with the boundary, but not without?
+    We still derive k_conc = k/compartment so that callers requesting concentration
+    output (settings.concentration_ids) can access it via derived().
     """
     if k not in pmodel.rate_rules:
         _handle_constant_variable(k, init=init, tmodel=tmodel, ctx=ctx)
     else:
         tmodel.variables[k] = data.Variable(value=init, unit=None)
 
-    # We need the concentration of the boundary species in reactions
+    # Expose concentration in derived() for callers that request it — but do NOT
+    # substitute k → k_conc in reaction kinetics (k in math = amount for HOSU=True).
     k_conc = f"{k}_conc"
     tmodel.derived[k_conc] = _div_expr(k, compartment)
-
-    # Fix reactions: k_conc = k/compartment introduces compartment dependency
-    for rxn_name in ctx.rxns_by_var[k]:
-        rxn = tmodel.reactions[rxn_name]
-        rxn.expr = expr(rxn.expr.subs(k, k_conc))
-        ctx.rxn_compartments.setdefault(rxn_name, set()).add(compartment)
 
 
 def _handle_constant_variable(
