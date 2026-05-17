@@ -430,7 +430,6 @@ _SKIP: dict[int, str] = {
     # re-sorting the queue after each assignment.
     934: "dynamic event priority re-evaluation not supported",
     # --- Complex multi-compartment models with unsupported patterns ---
-    999: "complex multi-compartment model: unsupported pattern",
     1000: "complex multi-compartment model: unsupported pattern",
     1121: "complex multi-compartment model: unsupported pattern",
     # --- Narrow-range AND trigger not detectable by scipy event detection ---

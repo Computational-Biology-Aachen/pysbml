@@ -181,6 +181,16 @@ def codegen(model: tdata.Model) -> str:
     # Not all variables always have an equation, because fuck why
     variable_names = [i for i in variable_names if i in diff_eqs]
 
+    # Variables with no ODE that have initial_assignments: module-level names set by
+    # initial_assignments at import time (e.g. S5_amount = initConc * C(0) = 50).
+    # Exposed via derived() so callers can read amounts like S5_amount.
+    # Variables without initial_assignments (value may be NaN) are excluded.
+    frozen_var_names = sorted(
+        name
+        for name in model.variables
+        if name not in set(variable_names) and name in model.initial_assignments
+    )
+
     # Actual codegen
     source = [
         "import math",
@@ -258,6 +268,7 @@ def codegen(model: tdata.Model) -> str:
         [
             f"{INDENT}return {{",
             *(f"{INDENT * 2}{name!r}: {name}," for name in model.parameters),
+            *(f"{INDENT * 2}{name!r}: {name}," for name in frozen_var_names),
             *(f"{INDENT * 2}{name!r}: {name}," for name in order),
             f"{INDENT}}}",
         ]
