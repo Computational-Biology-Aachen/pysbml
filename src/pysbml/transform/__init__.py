@@ -96,9 +96,11 @@ class Ctx:
 
     rxns_by_var: defaultdict[str, set[str]]
     ass_rules_by_var: defaultdict[str, set[str]]
-    rxn_had_compartment: dict[str, bool]
+    rxn_compartments: dict[str, set[str]]
     # Deferred stoichiometry corrections: (rxn_name, species_k, compartment)
-    # Applied after all species are transformed so rxn_had_compartment is final.
+    # Applied after all species are transformed so rxn_compartments is final.
+    # Correction only fires when compartment ∈ rxn_compartments[rxn_name], i.e. that
+    # compartment actually appeared in the original kinetic law (D4 multi-C fix).
     pending_stoich_corrections: list[tuple[str, str, str]]
 
 
@@ -616,7 +618,7 @@ def _handle_amount_boundary_has_substance_units(
     for rxn_name in ctx.rxns_by_var[k]:
         rxn = tmodel.reactions[rxn_name]
         rxn.expr = expr(rxn.expr.subs(k, k_conc))
-        ctx.rxn_had_compartment[rxn_name] = True
+        ctx.rxn_compartments.setdefault(rxn_name, set()).add(compartment)
 
 
 def _handle_constant_variable(
@@ -1014,7 +1016,7 @@ def transform_species(pmodel: pdata.Model, tmodel: data.Model, ctx: Ctx) -> None
     # Apply deferred stoichiometry corrections: multiply by compartment only when the
     # (final, fully-transformed) kinetic law has a concentration/time dependency.
     for rxn_name, species_k, compartment in ctx.pending_stoich_corrections:
-        if ctx.rxn_had_compartment.get(rxn_name, False):
+        if compartment in ctx.rxn_compartments.get(rxn_name, set()):
             rxn = tmodel.reactions.get(rxn_name)
             if rxn is not None and (s := rxn.stoichiometry.get(species_k)) is not None:
                 rxn.stoichiometry[species_k] = _mul_expr(s, compartment)
@@ -1647,7 +1649,7 @@ def transform(doc: pdata.Document) -> data.Model:
     ctx = Ctx(
         rxns_by_var=defaultdict(set),
         ass_rules_by_var=defaultdict(set),
-        rxn_had_compartment={},
+        rxn_compartments={},
         pending_stoich_corrections=[],
     )
     for name, rxn in pmodel.reactions.items():
@@ -1670,14 +1672,17 @@ def transform(doc: pdata.Document) -> data.Model:
     convert_rules_and_initial_assignments(pmodel=pmodel, tmodel=tmodel)
     convert_reactions(pmodel=pmodel, tmodel=tmodel)
 
-    # Pre-compute: for each reaction, whether any compartment symbol was in the
-    # original kinetic law. Used by _handle_amount to decide if stoichiometry
-    # needs compensating C factor (L2-style) or not (L3-style).
-    compartment_syms = {sympy.Symbol(c) for c in pmodel.compartments}
+    # Pre-compute: for each reaction, WHICH compartment symbols appeared in the
+    # original kinetic law. Stoichiometry correction is only applied for a species
+    # whose OWN compartment appeared in the law (fixes D4 multi-compartment gap:
+    # for S1∈V1, S2∈V2 with law k*S1*V1, only S1's stoich gets the V1 factor).
+    compartment_id_by_sym = {sympy.Symbol(c): c for c in pmodel.compartments}
     for rxn_name, rxn in tmodel.reactions.items():
-        ctx.rxn_had_compartment[rxn_name] = bool(
-            rxn.expr.free_symbols & compartment_syms
-        )
+        ctx.rxn_compartments[rxn_name] = {
+            compartment_id_by_sym[s]
+            for s in rxn.expr.free_symbols
+            if s in compartment_id_by_sym
+        }
 
     # Do the heavy lifting here
     transform_species(pmodel=pmodel, tmodel=tmodel, ctx=ctx)

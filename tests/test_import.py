@@ -778,3 +778,128 @@ def test_import_case(test: int) -> None:
 )
 def test_import_case_all_versions(test: int, model_file: Path) -> None:
     routine(test=test, model_file=model_file)
+
+
+_D4_MULTI_COMPARTMENT_SBML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="D4_multi_compartment_regression">
+    <listOfCompartments>
+      <compartment id="V1" size="2.0" constant="true" spatialDimensions="3"/>
+      <compartment id="V2" size="3.0" constant="true" spatialDimensions="3"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="S1" compartment="V1" initialAmount="2.0"
+               hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+      <species id="S2" compartment="V2" initialAmount="1.5"
+               hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+    </listOfSpecies>
+    <listOfParameters>
+      <parameter id="k_rate" value="0.5" constant="true"/>
+    </listOfParameters>
+    <listOfReactions>
+      <reaction id="R1" reversible="false">
+        <listOfReactants>
+          <speciesReference species="S1" stoichiometry="1.0" constant="true"/>
+        </listOfReactants>
+        <listOfProducts>
+          <speciesReference species="S2" stoichiometry="1.0" constant="true"/>
+        </listOfProducts>
+        <kineticLaw>
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply>
+              <times/>
+              <ci>k_rate</ci>
+              <ci>S1</ci>
+              <ci>V1</ci>
+            </apply>
+          </math>
+        </kineticLaw>
+      </reaction>
+    </listOfReactions>
+  </model>
+</sbml>
+"""
+
+
+def test_d4_multi_compartment_stoichiometry_correction(tmp_path: Path) -> None:
+    """Regression test for D4 multi-compartment stoichiometry scope gap.
+
+    initialAmount forces _handle_amount, which goes through the D4 stoichiometry
+    correction path. Kinetic law k_rate*S1*V1 has V1 but not V2.
+
+    After D4 fix: rxn_compartments[R1] = {V1}. Only S1's stoich gets *V1;
+    S2's stoich stays +1. Before the fix (boolean flag), both S1 and S2 stoichs
+    were multiplied by their respective compartments; S2 got spurious *V2.
+
+    Post-fix ODEs (state = amounts):
+      dS1/dt = -V1 * (k_rate * S1/V1) = -k_rate * S1
+      dS2/dt = +1  * (k_rate * S1/V1)
+
+    Analytical (D4-fix behavior):
+      S1(t) = 2.0 * exp(-0.5*t)
+      S2(t) = 2.5 - exp(-0.5*t)
+
+    Buggy behavior would give S2(2) ≈ 3.40 (spurious V2=3 factor); fixed gives ≈ 2.13.
+    """
+    import types
+
+    sbml_file = tmp_path / "model.xml"
+    sbml_file.write_text(_D4_MULTI_COMPARTMENT_SBML)
+
+    doc = load_document(file=sbml_file)
+    model_code = codegen(transform(doc))
+
+    module = types.ModuleType("D4_model")
+    exec(model_code, module.__dict__)  # noqa: S102
+
+    model_fn = module.model
+    derived_fn = module.derived
+    y0 = module.y0
+    variable_names = list(module.variable_names)
+
+    t_eval = np.linspace(0.0, 2.0, 21)
+    sol = solve_ivp(
+        model_fn,
+        y0=y0,
+        t_span=(t_eval[0], t_eval[-1]),
+        t_eval=t_eval,
+        method="Radau",
+        rtol=1e-9,
+        atol=1e-11,
+    )
+    result = pd.DataFrame(data=sol.y.T, index=sol.t, columns=variable_names)
+    result = pd.concat(
+        (
+            result,
+            pd.DataFrame(
+                data=[
+                    derived_fn(cast(float, time), row)
+                    for time, row in result.iterrows()
+                ],
+                index=sol.t,
+            ).astype(float),
+        ),
+        axis=1,
+    )
+
+    S1_col = "S1_amount" if "S1_amount" in result.columns else "S1"
+    S2_col = "S2_amount" if "S2_amount" in result.columns else "S2"
+
+    # S1: dS1/dt = -k_rate*S1  →  S1(t) = 2.0*exp(-0.5t)
+    s1_expected = 2.0 * np.exp(-0.5 * t_eval)
+    # S2: dS2/dt = k_rate*S1/V1 = 0.25*S1  →  S2(t) = 1.5 + 1 - exp(-0.5t) = 2.5 - exp(-0.5t)
+    s2_expected = 2.5 - np.exp(-0.5 * t_eval)
+
+    np.testing.assert_allclose(
+        result[S1_col].to_numpy(),
+        s1_expected,
+        rtol=1e-4,
+        err_msg=f"S1_amount mismatch (D4 regression).\nModel:\n{model_code}",
+    )
+    np.testing.assert_allclose(
+        result[S2_col].to_numpy(),
+        s2_expected,
+        rtol=1e-4,
+        err_msg=f"S2_amount mismatch: spurious V2 factor not suppressed (D4).\nModel:\n{model_code}",
+    )
