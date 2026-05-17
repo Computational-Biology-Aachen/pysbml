@@ -301,6 +301,22 @@ def codegen(model: tdata.Model) -> str:
             trigger_code = codegen_expr(trigger_expr.args[0] - trigger_expr.args[1])
         elif isinstance(trigger_expr, (sympy.StrictLessThan, sympy.LessThan)):
             trigger_code = codegen_expr(trigger_expr.args[1] - trigger_expr.args[0])
+        elif isinstance(trigger_expr, sympy.And):
+            # AND of comparisons → min() of their continuous forms.
+            # Keeps the trigger function continuous so scipy can bisect accurately.
+            parts = []
+            for arg in trigger_expr.args:
+                if isinstance(arg, (sympy.StrictGreaterThan, sympy.GreaterThan)):
+                    parts.append(codegen_expr(arg.args[0] - arg.args[1]))
+                elif isinstance(arg, (sympy.StrictLessThan, sympy.LessThan)):
+                    parts.append(codegen_expr(arg.args[1] - arg.args[0]))
+                else:
+                    parts = []
+                    break
+            if parts:
+                trigger_code = f"min({', '.join(parts)})"
+            else:
+                trigger_code = f"float({codegen_expr(trigger_expr)}) - 0.5"
         else:
             trigger_code = f"float({codegen_expr(trigger_expr)}) - 0.5"
         source.append(f"{INDENT}return float({trigger_code})")

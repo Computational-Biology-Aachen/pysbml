@@ -487,13 +487,6 @@ _SKIP: dict[int, str] = {
     # Model fires Rinc/Qinc events every 0.01s for 1001s → ~100k solve_ivp calls.
     # Python event simulator overhead exceeds 60s test timeout; model logic is correct.
     966: "high-frequency event model exceeds test timeout (~100k event firings)",
-    # --- Event simulation timeout ---
-    # Event trigger/assignment logic for these models produces an infinite loop in the
-    # simulator.  The codegen itself is likely fine; needs work in _simulate_events.
-    1675: "event simulation timeout",
-    1677: "event simulation timeout",
-    1678: "event simulation timeout",
-    1680: "event simulation timeout",
     # --- No ODE state variables ---
     # Models contain only parameters / assignment rules with no dynamic species.
     # There is nothing to integrate; pysbml correctly declines to simulate them.
