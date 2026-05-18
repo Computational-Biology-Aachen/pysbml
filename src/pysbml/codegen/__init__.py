@@ -276,10 +276,19 @@ def codegen(model: tdata.Model) -> str:
         f"{INDENT}{name}: float = {codegen_expr(exprs[name])}" for name in order
     )
 
+    # Build parameter return entries: if a parameter name conflicts with the function
+    # arg 'time', it is shadowed inside derived() — emit its literal value instead.
+    _shadowed = {"time", "variables"}
+
+    def _param_entry(name: str, val: sympy.Float) -> str:
+        if name in _shadowed:
+            return f"{INDENT * 2}{name!r}: {codegen_value(val)},"
+        return f"{INDENT * 2}{name!r}: {name},"
+
     source.extend(
         [
             f"{INDENT}return {{",
-            *(f"{INDENT * 2}{name!r}: {name}," for name in model.parameters),
+            *(_param_entry(name, par.value) for name, par in model.parameters.items()),
             *(f"{INDENT * 2}{name!r}: {name}," for name in static_var_names),
             *(f"{INDENT * 2}{name!r}: {name}," for name in frozen_var_names),
             *(f"{INDENT * 2}{name!r}: {name}," for name in order),

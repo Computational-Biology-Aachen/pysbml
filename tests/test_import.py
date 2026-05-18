@@ -532,11 +532,10 @@ _SKIP: dict[int, str] = {
     # rule; the history of x is needed for a correct DDE solution.
     940: "no ODE: DDE — delay(x, 0.5) on time-varying assignment rule x=sin(10t)",
     942: "no ODE: DDE — delay(x, 0.5) on time-varying assignment rule x=sin(10t)",
-    # --- No ODE variables: parameter named 'time' shadows SBML time csymbol ---
-    # derived('time', []) uses the module-level time=0.0 constant rather than the
-    # SBML parameter; 1820/1821 expect the parameter value, not the integration time.
-    1820: "no ODE: parameter named 'time' shadows SBML time csymbol in derived()",
-    1821: "no ODE: parameter named 'time' shadows SBML time csymbol in derived()",
+    # --- No ODE variables: initialAssignment uses time csymbol when parameter 'time' exists ---
+    # d = <csymbol>time</csymbol> at t=0 → 0, but module-level 'time' is the param (10).
+    # The csymbol and the param share the same Python name; codegen cannot distinguish them.
+    1821: "no ODE: 'time' csymbol vs 'time' parameter name collision in initialAssignment",
     # --- No ODE variables: derived() has no columns matching expected output ---
     # These models use SBML Hierarchical Model Composition (comp extension) or other
     # constructs that pysbml doesn't expose in derived(); no columns to compare.
