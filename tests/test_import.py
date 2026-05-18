@@ -621,35 +621,16 @@ _SKIP: dict[int, str] = {
     1593: "DDE (delay) not supported",
     # --- Fast reactions: QSS implementation partial ---
     # 870, 872-875, 986, 987, 1051-1053 now pass with QSS reduction.
-    # Remaining cases require unsupported QSS variants:
+    # 1396, 1397, 1399, 1544-1551, 1558-1560, 1565, 1567, 1569, 1571, 1572 now pass
+    # with two-pass conservation-law QSS. Remaining cases:
     871: "QSS: small trajectory divergence from reference (unresolved)",
     988: "QSS: fast reaction interleaved with slow reactions not supported",
-    # QSS: sympy cannot solve the fast-subsystem flux algebraically
-    1396: "QSS: cannot solve algebraically",
-    1397: "QSS: cannot solve algebraically",
-    1398: "QSS: cannot solve algebraically",
-    1539: "QSS: cannot solve algebraically",
-    1544: "QSS: cannot solve algebraically",
-    1545: "QSS: cannot solve algebraically",
-    1546: "QSS: cannot solve algebraically",
-    1547: "QSS: cannot solve algebraically",
-    1548: "QSS: cannot solve algebraically",
-    1549: "QSS: cannot solve algebraically",
-    1550: "QSS: cannot solve algebraically",
-    1551: "QSS: cannot solve algebraically",
-    1558: "QSS: cannot solve algebraically",
-    1559: "QSS: cannot solve algebraically",
-    1560: "QSS: cannot solve algebraically",
-    1565: "QSS: cannot solve algebraically",
-    1567: "QSS: cannot solve algebraically",
+    # QSS: event assigns to a fast species — re-equilibration after events not supported
+    1398: "QSS: event assignment to QSS species requires re-equilibration after fire",
+    1539: "QSS + DDE: delay() on QSS-derived species not supported",
     # QSS: piecewise kinetics produce nan solution branches
     1568: "QSS: piecewise kinetics not supported",
     1570: "QSS: piecewise kinetics not supported",
-    # QSS: all species in fast reactions → no ODE state variables remain
-    1399: "QSS: all-fast system produces no ODE state variables",
-    1569: "QSS: all-fast system produces no ODE state variables",
-    1571: "QSS: all-fast system produces no ODE state variables",
-    1572: "QSS: all-fast system produces no ODE state variables",
 }
 
 TEST_IDS = sorted(

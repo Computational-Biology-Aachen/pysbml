@@ -62,6 +62,7 @@ Source: https://sbml.org/software/libsbml/5.18.0/docs/formatted/python-api/class
 
 """
 
+import contextlib
 import dataclasses
 import logging
 import math
@@ -1124,11 +1125,55 @@ def convert_fast_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
     }
     for n, c in pmodel.compartments.items():
         init_param_subs[sympy.Symbol(n)] = sympy.Float(c.size)
+    # Include tmodel parameters (local params stored there after transform, e.g. J0_k1)
+    for n, p in tmodel.parameters.items():
+        sym = sympy.Symbol(n)
+        if sym not in init_param_subs:
+            with contextlib.suppress(TypeError, ValueError):
+                val = float(p.value)
+                if math.isfinite(val):
+                    init_param_subs[sym] = sympy.Float(val)
+    # Overwrite with algebraically-derived parameter values (e.g. from algebraic rules)
+    # so the is_deferred check reflects the actual t=0 value, not the default 0.
+    for name, derived_expr in tmodel.derived.items():
+        if name in pmodel.parameters or name in pmodel.compartments:
+            with contextlib.suppress(TypeError, ValueError):
+                init_param_subs[sympy.Symbol(name)] = sympy.Float(float(derived_expr))
+    # Evaluate initial assignments for parameters at t=0 (time=0).
+    # These are not in tmodel.derived (only evaluated once at model init), so they
+    # must be handled separately — e.g. k1 = 0.5 - time = 0.5 at t=0.
+    init_subs_t0 = {**init_param_subs, sympy.Symbol("time"): sympy.Float(0.0)}
+    for name, init_expr in tmodel.initial_assignments.items():
+        if name in pmodel.parameters:
+            with contextlib.suppress(TypeError, ValueError):
+                init_param_subs[sympy.Symbol(name)] = sympy.Float(
+                    float(init_expr.subs(init_subs_t0))
+                )
 
     qss_species: set[str] = set()
     # Deferred: species whose fast reaction is inactive at t=0 (parameter-gated).
     # Value: (net_flux expr, QSS solution expr) for event assignment generation.
     deferred_qss: dict[str, tuple[sympy.Expr, sympy.Expr]] = {}
+
+    # Save initial state-variable values before any species are removed.
+    # For variables with an initialAssignment (e.g. k1=0.5-time), use the
+    # evaluated assignment value at t=0 instead of the raw uninitialized var.value.
+    # Used by the conservation-law fallback in the second pass.
+    _ia_subs_t0 = {**init_param_subs, sympy.Symbol("time"): sympy.Float(0.0)}
+    initial_vals: dict[str, sympy.Expr] = {}
+    for name, var in tmodel.variables.items():
+        if name in tmodel.initial_assignments:
+            try:
+                initial_vals[name] = sympy.Float(
+                    float(tmodel.initial_assignments[name].subs(_ia_subs_t0))
+                )
+            except (TypeError, ValueError):
+                initial_vals[name] = var.value
+        else:
+            initial_vals[name] = var.value
+
+    # Unsolvable in pass 1: (has_conc, solve_sym, net_flux, participating_rxns)
+    unsolvable: dict[str, tuple[bool, sympy.Symbol, sympy.Expr, set[str]]] = {}
 
     for species in list(tmodel.variables):
         participating = {
@@ -1153,8 +1198,8 @@ def convert_fast_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
 
         solutions = sympy.solve(net_flux, solve_sym)
         if not solutions:
-            msg = f"QSS: cannot solve algebraically for {species}"
-            raise NotImplementedError(msg)
+            unsolvable[species] = (has_conc, solve_sym, net_flux, participating)
+            continue
         if len(solutions) > 1:
             warnings.warn(
                 f"Multiple QSS solutions for {species}; using first", stacklevel=2
@@ -1168,6 +1213,33 @@ def convert_fast_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
         if solution.has(sympy.S.NaN):
             msg = f"QSS: piecewise solution with nan branch for {species}"
             raise NotImplementedError(msg)
+
+        # If the only solution is the trivial 0, check whether the net flux at the
+        # initial conditions is positive (species is being produced, not consumed).
+        # When flux > 0 at t=0 the species is moving AWAY from zero — it is being
+        # produced, and 0 is the unstable equilibrium. Defer to the conservation-law
+        # pass instead, which derives the correct QSS value from a solved partner.
+        if solution.is_zero:
+            try:
+                flux_subs = dict(init_param_subs)
+                # Apply derived expressions for non-state-variable names (e.g. parameters
+                # set by initialAssignment like k1=0.5). Do NOT apply derived values for
+                # species that are in initial_vals — a partner QSS-solved to 0 must not
+                # zero out the flux check for the current species.
+                for dname, dexpr in tmodel.derived.items():
+                    if dname not in initial_vals:
+                        with contextlib.suppress(TypeError, ValueError):
+                            flux_subs[sympy.Symbol(dname)] = sympy.Float(
+                                float(dexpr.subs(flux_subs))
+                            )
+                # State variable initial values override everything else.
+                flux_subs.update({sympy.Symbol(n): v for n, v in initial_vals.items()})
+                flux_at_init = float(net_flux.subs(flux_subs))
+                if flux_at_init > 0:
+                    unsolvable[species] = (has_conc, solve_sym, net_flux, participating)
+                    continue
+            except (TypeError, ValueError):
+                pass
 
         # If the fast flux is identically zero at t=0 (e.g. a rate parameter starts
         # at 0 and is set by an event), QSS is not valid from t=0. Keep the species
@@ -1189,11 +1261,129 @@ def convert_fast_reactions(pmodel: pdata.Model, tmodel: data.Model) -> None:
         del tmodel.variables[species]
         qss_species.add(species)
 
+    # Pass 2: resolve species that were unsolvable via direct sympy.solve.
+    # Two fallback strategies, retried until no more progress:
+    #   A) Zero net flux: reaction rate is identically 0 → species stays at initial value.
+    #   B) Stoichiometric conservation: for a single fast reaction where one partner is
+    #      already solved, derive the QSS value from the null-space conservation law:
+    #      X_qss = X_init + (n_X/n_Y) * (Y_qss - Y_init)
+    changed = True
+    while changed and unsolvable:
+        changed = False
+        for species in list(unsolvable):
+            has_conc, solve_sym, net_flux, participating = unsolvable[species]
+
+            # Strategy A: identically zero flux → keep at initial value
+            if net_flux.is_zero:
+                solution = cast(sympy.Expr, initial_vals.get(species, sympy.Float(0.0)))
+                if has_conc:
+                    compartment = cast(str, pmodel.variables[species].compartment)
+                    tmodel.derived[f"{species}_conc"] = solution / sympy.Symbol(
+                        compartment
+                    )
+                    tmodel.derived[species] = solution
+                else:
+                    tmodel.derived[species] = solution
+                del tmodel.variables[species]
+                qss_species.add(species)
+                del unsolvable[species]
+                changed = True
+                continue
+
+            # Strategy B: conservation law with an already-solved partner
+            solution = _qss_conservation_solution(
+                species,
+                has_conc,
+                participating,
+                tmodel,
+                qss_species,
+                initial_vals,
+                pmodel,
+            )
+            if solution is not None:
+                try:
+                    is_deferred = bool(net_flux.subs(init_param_subs).is_zero)
+                except (TypeError, ValueError):
+                    is_deferred = False
+                if is_deferred:
+                    deferred_qss[species] = (net_flux, solution)
+                elif has_conc:
+                    compartment = cast(str, pmodel.variables[species].compartment)
+                    tmodel.derived[f"{species}_conc"] = solution
+                    tmodel.derived[species] = _mul_expr(solution, compartment)
+                else:
+                    tmodel.derived[species] = solution
+                if not is_deferred:
+                    del tmodel.variables[species]
+                    qss_species.add(species)
+                del unsolvable[species]
+                changed = True
+
+    if unsolvable:
+        species = next(iter(unsolvable))
+        msg = f"QSS: cannot solve algebraically for {species}"
+        raise NotImplementedError(msg)
+
     if qss_species:
         _apply_qss_corrections(pmodel, tmodel, fast_rxn_names, qss_species)
 
     if deferred_qss:
         _apply_deferred_qss_events(pmodel, tmodel, fast_rxn_names, deferred_qss)
+
+
+def _qss_conservation_solution(
+    species: str,
+    has_conc: bool,  # noqa: FBT001
+    participating: set[str],
+    tmodel: data.Model,
+    qss_species: set[str],
+    initial_vals: dict[str, sympy.Expr],
+    pmodel: pdata.Model,
+) -> sympy.Expr | None:
+    """Derive QSS for `species` via stoichiometric conservation with a solved partner.
+
+    When the net flux for X does not contain X (e.g. rate = k*Y for X→Y), the
+    conservation law n_Y*X - n_X*Y = const (where n are ODE stoich coefficients)
+    lets us express X_qss in terms of an already-solved Y_qss.
+    """
+    X_state_init = initial_vals.get(species, sympy.Float(0.0))
+
+    for rxn_name in participating:
+        rxn = tmodel.reactions.get(rxn_name)
+        if rxn is None:
+            continue
+        stoich = rxn.stoichiometry
+        n_X = stoich.get(species)
+        if n_X is None:
+            continue
+
+        for partner in stoich:
+            if partner == species or partner not in qss_species:
+                continue
+
+            n_Y = stoich[partner]
+            Y_state_init = initial_vals.get(partner, sympy.Float(0.0))
+            # Y_state_qss: QSS value of partner's ODE state variable.
+            # tmodel.derived[partner] holds the amount (when has_conc) or
+            # concentration (otherwise) — matching what tmodel.variables stored.
+            Y_state_qss = tmodel.derived.get(partner, sympy.Symbol(partner))
+
+            # Conservation: X_state_qss = X_state_init + (n_X/n_Y)*(Y_state_qss - Y_state_init)
+            try:
+                ratio = sympy.simplify(n_X / n_Y)  # type: ignore[operator]
+                X_state_qss = sympy.simplify(
+                    X_state_init + ratio * (Y_state_qss - Y_state_init)  # type: ignore[operator]
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+
+            if has_conc:
+                # State var is amount; return the concentration form for tmodel.derived[_conc]
+                compartment = cast(str, pmodel.variables[species].compartment)
+                return sympy.simplify(X_state_qss / sympy.Symbol(compartment))
+            return X_state_qss
+
+    return None
 
 
 def _apply_qss_corrections(
