@@ -124,4 +124,4 @@ trailing_comma_inline_array = true
 
 [tool.uv]
 package = true
-exclude-newer = "1 week"
+exclude-newer = "3 days"
