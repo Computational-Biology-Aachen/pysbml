@@ -1,0 +1,123 @@
+# PySBML
+
+> PySBML takes SBML models and makes them simpler. It parses SBML files into structured Python dataclasses and transforms them into flat, simplified representations suitable for ODE solvers. Used by MxlPy's SBML module as the reference implementation, and by MxlWeb as a reference spec for its SBML layer. Maintained by the Computational Biology group at RWTH Aachen.
+
+Targets Python 3.12+. Part of a tool family with [MxlPy](https://github.com/Computational-Biology-Aachen/mxlpy) (mechanistic learning), [MxlBricks](https://github.com/Computational-Biology-Aachen/mxl-bricks) (composable reaction bricks), and [MxlWeb](https://github.com/Computational-Biology-Aachen/mxl-web) (browser simulation).
+
+## Public API
+
+Two top-level functions handle all loading:
+
+- `load_model(file)` → `pysbml.parse.data.Model` — parses an SBML file and returns the raw parsed model with all SBML components intact (compartments, species, parameters, reactions with MathML, rules, events, units).
+
+- `load_and_transform_model(file)` → `pysbml.transform.data.Model` — parses and then simplifies the model: merges compartments into parameters, converts species to variables/parameters, converts MathML rate laws to SymPy expressions, resolves algebraic rules, applies QSS reduction for fast reactions, and normalises amount/concentration semantics.
+
+Both accept `str | Path`.
+
+## Parse module (`pysbml.parse`)
+
+Handles SBML document loading and version-specific parsing via libsbml:
+
+- `load_document(file)` → `pysbml.parse.data.Document` — reads an SBML file, flattens `comp` packages if present, dispatches to the correct level/version parser, and returns a `Document` containing the parsed `Model` and list of active `Plugin`s.
+
+Supported SBML versions:
+
+| Level | Versions |
+|-------|----------|
+| 1     | 1, 2     |
+| 2     | 1, 2, 3, 4, 5 |
+| 3     | 1, 2     |
+
+Submodules:
+
+- `data.py` — parsed model dataclasses: `Document`, `Model`, `Species`, `Compartment`, `Parameter`, `Reaction`, `Event`, `Trigger`, `Assignment`, `Function`, `Derived`, `Constraint`, unit types
+- `l1.py`, `l2.py`, `l3.py` — SBML Level 1/2/3 parsers
+- `mathml.py` — MathML expression parser (converts MathML XML to typed AST nodes)
+- `name_conversion.py` — SBML ID/name conversion utilities
+- `units.py` — SBML unit parsing and representation
+
+## Transform module (`pysbml.transform`)
+
+Simplifies a parsed SBML model into a flat ODE-ready representation:
+
+- `transform(doc)` → `pysbml.transform.data.Model` — the main entry point. Takes a `Document` and returns a simplified `Model`.
+
+Key transformations:
+
+1. **Species → variables/parameters** — constant species become parameters; dynamic species become variables. Boundary-condition species are handled per SBML spec §4.6.6.
+2. **Amount/concentration normalisation** — species in amount units are converted to concentration form (`S_conc = S / compartment`), with stoichiometry adjusted accordingly. `hasOnlySubstanceUnits` is respected.
+3. **Compartment flattening** — constant compartments are merged into parameters; dynamic compartments become variables.
+4. **MathML → SymPy** — all rate laws, rules, and expressions are converted from MathML ASTs to SymPy expressions.
+5. **Algebraic rules** — solved symbolically via `sympy.solve`; the floating variable is identified and expressed in terms of other quantities.
+6. **Fast reaction QSS** — species exclusively in fast reactions are reduced to derived quantities (quasi-steady-state approximation).
+7. **Local parameters** — renamed to `<reaction>_<param>` to avoid name collisions.
+8. **Events** — triggers, delays, priorities, and assignments converted to SymPy expressions.
+9. **Units** — SBML units mapped to SymPy physics units where possible.
+
+Submodules:
+
+- `data.py` — transformed model dataclasses: `Model`, `Variable`, `Parameter`, `Reaction`, `Event`, `Expr`, `Stoichiometry`
+- `mathml2sympy.py` — MathML AST to SymPy expression converter
+- `units.py` — SBML unit to SymPy unit conversion maps
+
+## Quick start
+
+```python
+from pysbml import load_model, load_and_transform_model
+
+# Parse raw SBML
+raw_model = load_model("model.xml")
+print(raw_model.name)
+print(list(raw_model.compartments.keys()))
+print(list(raw_model.variables.keys()))
+print(list(raw_model.reactions.keys()))
+
+# Parse + simplify for ODE solving
+simple = load_and_transform_model("model.xml")
+print(simple.name)
+print(list(simple.parameters.keys()))   # flat parameters (compartments merged in)
+print(list(simple.variables.keys()))    # dynamic variables with initial values
+print(list(simple.reactions.keys()))    # reactions with SymPy rate expressions
+
+# Inspect a reaction's rate law
+rxn = simple.reactions["v1"]
+print(rxn.expr)                          # SymPy expression
+print(rxn.stoichiometry)                 # {species: coefficient}
+```
+
+## Supported SBML features
+
+- Compartments (constant and dynamic)
+- Species (amount and concentration, boundary conditions, `hasOnlySubstanceUnits`)
+- Parameters (constant and variable)
+- Reactions with MathML kinetic laws and stoichiometry
+- Local reaction parameters
+- Assignment rules, rate rules, algebraic rules
+- Initial assignments
+- Events (triggers, delays, priorities, assignments, `useValuesFromTriggerTime`)
+- Function definitions
+- Unit definitions (atomic and composite)
+- `comp` package (flattening before parse)
+- Constraints (parsed but not modelled in ODEs)
+
+## Installation
+
+```bash
+pip install pysbml
+# or
+uv sync --all-extras --all-groups
+```
+
+Dependencies: `python-libsbml` (SBML parsing), `sympy` (symbolic expressions).
+
+## MCP Server
+
+[MxlMCP](https://computational-biology-aachen.github.io/mxl-mcp/mxlpy/latest) is a Model Context Protocol server for MxlPy. It exposes MxlPy's modeling, simulation, fitting, and analysis capabilities as tools that AI assistants can call programmatically — enabling conversational model building, parameter estimation, and systems biology analysis.
+
+## Tool family
+
+- [MxlPy](https://github.com/Computational-Biology-Aachen/mxlpy) — Python package for mechanistic learning (ODEs + ML)
+- [MxlBricks](https://github.com/Computational-Biology-Aachen/mxl-bricks) — composable reaction building blocks on top of MxlPy
+- [MxlModels](https://github.com/Computational-Biology-Aachen/mxl-models) — flat single-file versions of MxlBricks models (generated)
+- [MxlWeb](https://github.com/Computational-Biology-Aachen/mxl-web) — browser ODE solver (SvelteKit + WebWorkers + WASM)
+- [Parameteriser](https://github.com/Computational-Biology-Aachen/parameteriser) — kinetic parameter lookup (BRENDA DB)
