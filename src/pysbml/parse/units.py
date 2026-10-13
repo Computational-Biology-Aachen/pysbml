@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Utility functions for mapping libsbml unit and AST type constants."""
 
 from __future__ import annotations

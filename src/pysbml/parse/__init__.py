@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """SBML document parsing: dispatch to version-specific parsers."""
 
 from __future__ import annotations

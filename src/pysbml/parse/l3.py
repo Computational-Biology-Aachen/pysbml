@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Stub for SBML Level 3 parser (delegates to l1)."""
 
 import logging

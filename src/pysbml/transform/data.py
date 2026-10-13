@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Data classes for the transformed (sympy-based) SBML model representation."""
 
 from __future__ import annotations

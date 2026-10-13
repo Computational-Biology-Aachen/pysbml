@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Transform SBML complexity into simpler representation.
 
 Transformations:

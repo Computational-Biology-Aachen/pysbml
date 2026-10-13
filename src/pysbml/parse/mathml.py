@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """MathML AST node types and libsbml ASTNode dispatch for SBML math parsing."""
 
 from __future__ import annotations

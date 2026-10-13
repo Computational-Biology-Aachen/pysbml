@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Convert parsed MathML AST nodes to sympy expressions."""
 
 from __future__ import annotations

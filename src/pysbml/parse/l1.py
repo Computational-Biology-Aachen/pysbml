@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """SBML Level 1/2/3 parser: converts libsbml model objects to pysbml data classes."""
 
 import itertools as it

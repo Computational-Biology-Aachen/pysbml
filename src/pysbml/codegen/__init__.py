@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Code generation from transformed SBML models to Python ODE functions."""
 
 from __future__ import annotations

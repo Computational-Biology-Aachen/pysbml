@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """SBML reader for ODE models."""
 
 from __future__ import annotations

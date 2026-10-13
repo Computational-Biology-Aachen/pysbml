@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Sympy unit objects and prefix mappings for SBML unit transformation."""
 
 from __future__ import annotations

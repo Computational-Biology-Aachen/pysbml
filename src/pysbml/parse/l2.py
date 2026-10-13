@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """SBML Level 2 parser: extends l1 with stoichiometryMath support."""
 
 import logging

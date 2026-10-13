@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Utilities for converting SBML identifiers to valid Python names."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright 2025 Marvin van Aalst, Anna Matuszyńska
+
 """Regenerate test files that currently have '# FIXME: implement'."""
 
 from __future__ import annotations
