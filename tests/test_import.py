@@ -95,7 +95,11 @@ def _simulate_events(
     variable_names: list[str],
     atol: float,
     rtol: float,
+    seed: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    # Equal-priority events fire in random order (SBML §4.12.8); seeding per case keeps
+    # stochastic cases reproducible across runs.
+    rng = random.Random(seed)  # noqa: S311 ; not cryptographic
     t_arr = np.asarray(t_eval, dtype=float)
     triggers = [event[0] for event in events]
     assign_fns = [event[1] for event in events]
@@ -135,7 +139,7 @@ def _simulate_events(
         def enqueue(idx: int, cap: np.ndarray) -> None:
             pfn = events[idx][5]
             p = float(pfn(fire_time, updated_state)) if pfn is not None else 0.0
-            queue.append((-p, random.random(), idx, tuple(cap)))  # noqa: S311 ; not cryptographic
+            queue.append((-p, rng.random(), idx, tuple(cap)))
             queue.sort()
 
         for idx in event_indices:
@@ -357,15 +361,35 @@ def _simulate_events(
                             first_event_y = np.asarray(event_y[0], dtype=float).copy()
 
                     if first_event_y is not None:
-                        # Fire all available events whose trigger is at or near zero at
-                        # the crossing time. Continuous triggers evaluate to exactly 0
-                        # at the zero-crossing; step-function triggers to 0.5. scipy
-                        # dense-output interpolation may leave the value at -epsilon,
-                        # so use >= -tolerance rather than >= 0.
+                        # Fire available events whose trigger is >= 0 at the crossing
+                        # time (continuous triggers are exactly 0 at the zero-crossing,
+                        # step-function triggers 0.5). scipy dense-output interpolation
+                        # may leave a crossing trigger at -epsilon, so values in
+                        # [-tolerance, 0) also count — but only if the event actually
+                        # crossed in this segment: scipy reported it, or its trigger was
+                        # clearly negative at the segment start (scipy reports only the
+                        # first of several simultaneous terminal events). A trigger
+                        # idling just below zero through round-off (e.g. abs(Q - R) >
+                        # maxdiff with abs(Q - R) == maxdiff - 1e-16) must not piggyback
+                        # on another event's root: it would fire with stale trigger-time
+                        # values and then miss its real False->True transition.
+                        crossed = {
+                            available_event_indices[k]
+                            for k, event_t in enumerate(sol.t_events)
+                            if event_t.size > 0
+                        }
                         triggered_events = [
                             idx
                             for idx in available_event_indices
-                            if triggers[idx](first_event_t, first_event_y) >= -tolerance
+                            if triggers[idx](first_event_t, first_event_y) >= 0
+                            or (
+                                (
+                                    idx in crossed
+                                    or triggers[idx](t_cur, y_cur) < -tolerance
+                                )
+                                and triggers[idx](first_event_t, first_event_y)
+                                >= -tolerance
+                            )
                         ]
                         if triggered_events:
                             for idx in triggered_events:
@@ -467,6 +491,7 @@ def routine(
             variable_names=variable_names,
             atol=settings.atol / 100,
             rtol=settings.rtol / 100,
+            seed=test,
         )
     else:
         sol = solve_ivp(
@@ -525,13 +550,6 @@ _SKIP: dict[int, str] = {
     # integrator step; scipy sees the same sign at both endpoints and misses the crossing.
     # The continuous min() trigger helps with Zeno loops but not with missed detections.
     1511: "narrow-range AND trigger: window too small for scipy adaptive step",
-    # --- Knife-edge event trigger: min(0.2 - maxdiff, time - 99) ---
-    # errorHigh event fires on whichever side crosses first; a few ULPs of
-    # floating-point drift (e.g. BLAS thread-count differences between machines)
-    # can flip which branch wins near t=99, causing an extra/missing event firing.
-    # Failed once in CI (2026-09-15) but passed 9/9 local reproduction attempts and
-    # every prior CI run since at least 2026-06 — not reproducible, same class as 1511.
-    1599: "knife-edge event trigger: min(0.2-maxdiff, time-99) sensitive to float drift",
     # --- High-frequency event model: ~100k event firings over t=0..1001 ---
     # Model fires Rinc/Qinc events every 0.01s for 1001s → ~100k solve_ivp calls.
     # Python event simulator overhead exceeds 60s test timeout; model logic is correct.
