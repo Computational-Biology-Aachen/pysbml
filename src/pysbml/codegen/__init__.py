@@ -347,6 +347,16 @@ def codegen(model: tdata.Model) -> str:
         source.append(f"_event_{event_name}_trigger.terminal = True")
         source.append(f"_event_{event_name}_trigger.direction = 1")
 
+        # Exact boolean trigger: the continuous form above loses > vs >= at zero
+        source.append(
+            f"\n\ndef _event_{event_name}_condition(time: float, variables: Iterable[float]) -> bool:"
+        )
+        if unpack:
+            source.append(unpack)
+        for dname in derived_in_order:
+            source.append(f"{INDENT}{dname}: float = {codegen_expr(exprs[dname])}")  # noqa: PERF401
+        source.append(f"{INDENT}return bool({codegen_expr(trigger_expr)})")
+
         source.append(
             f"\n\ndef _event_{event_name}_assignments(time: float, variables: Iterable[float]) -> dict[str, float]:"
         )
@@ -390,8 +400,9 @@ def codegen(model: tdata.Model) -> str:
             )
 
     event_tuples = ", ".join(
-        "({trigger}, {assign}, {iv}, {pers}, {delay}, {prio}, {uvftt})".format(
+        "({trigger}, {assign}, {iv}, {pers}, {delay}, {prio}, {uvftt}, {cond})".format(
             trigger=f"_event_{name}_trigger",
+            cond=f"_event_{name}_condition",
             assign=f"_event_{name}_assignments",
             iv=event.initial_value,
             pers=event.persistent,

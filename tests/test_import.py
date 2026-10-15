@@ -104,12 +104,16 @@ def _simulate_events(
     triggers = [event[0] for event in events]
     assign_fns = [event[1] for event in events]
     delay_fns = [event[4] for event in events]
+    # Exact boolean trigger conditions; the continuous trigger functions are only
+    # used for root finding, as they cannot tell > from >= at zero.
+    conditions = [event[7] for event in events]
     tolerance = 1e-10
 
     y_cur = np.array(y0, dtype=float)
     t_cur = float(t_arr[0])
     recorded_states: list[np.ndarray] = []
     armed = [True] * len(events)
+    stalled: set[int] = set()
     pending: list[
         tuple[
             float,
@@ -126,6 +130,11 @@ def _simulate_events(
         for variable, value in assignments.items():
             new_state[variable_names.index(variable)] = value
         return new_state
+
+    def rising(idx: int, t: float, y: np.ndarray) -> bool:
+        h = 1e-6 * max(1.0, abs(t))
+        y_next = y + h * np.asarray(model(t, y), dtype=float)
+        return triggers[idx](t + h, y_next) > triggers[idx](t, y)
 
     def process_triggered_events(
         event_indices: list[int],
@@ -145,30 +154,25 @@ def _simulate_events(
         for idx in event_indices:
             enqueue(idx, trigger_state)
 
-        # Use >= -tolerance for firing events (at the zero-crossing boundary) so their
-        # trigger is treated as True. Use strict > 0 for non-firing events whose trigger
-        # value 0 is the boundary of a strict condition (> vs >=): treating 0 as True
-        # would suppress chain reactions (e.g. maxcheck with |Q-R| > maxdiff stays
-        # "True" even when abs(Q-R) == maxdiff == 0, preventing the False->True
-        # transition that fires it after Qinc raises |Q-R|).
+        # Events firing at this root stay True while their continuous trigger is
+        # within tolerance of zero: the root finder may land a hair short of the
+        # threshold, where the exact condition reads False. All other events use the
+        # exact condition, so e.g. maxcheck (abs(Q - R) > maxdiff) is False at
+        # equality and its False->True transition after Qinc is detected.
         firing_set = set(event_indices)
-        prev_trig = {
-            i: (
-                triggers[i](fire_time, updated_state) >= -tolerance
-                if i in firing_set
-                else triggers[i](fire_time, updated_state) > 0
+
+        def holds(i: int, state: np.ndarray) -> bool:
+            return conditions[i](fire_time, state) or (
+                i in firing_set and triggers[i](fire_time, state) >= -tolerance
             )
-            for i in range(len(events))
-        }
+
+        prev_trig = {i: holds(i, updated_state) for i in range(len(events))}
 
         while queue:
             _, _, idx, cap = queue.pop(0)
 
-            persistent = events[idx][3]
             # Non-persistent events are cancelled if trigger has gone False in current state.
-            # Use < -tolerance (not < 0) to avoid floating-point cancellation when the
-            # trigger evaluates to a tiny negative value (e.g. -1.7e-18) at a zero-crossing.
-            if not persistent and triggers[idx](fire_time, updated_state) < -tolerance:
+            if not events[idx][3] and not holds(idx, updated_state):
                 continue
 
             use_values_from_trigger_time = events[idx][6]
@@ -209,22 +213,12 @@ def _simulate_events(
                     ]
                     queue.sort()
 
-            new_trig = {
-                i: triggers[i](fire_time, updated_state) > 0 for i in range(len(events))
-            }
+            new_trig = {i: holds(i, updated_state) for i in range(len(events))}
             for i in range(len(events)):
                 old, new = prev_trig[i], new_trig[i]
                 if not old and new:
                     enqueue(i, updated_state)
-                elif (
-                    old
-                    and triggers[i](fire_time, updated_state) < -tolerance
-                    and not events[i][3]
-                ):
-                    # Only cancel non-persistent events whose trigger is clearly False
-                    # (< -tolerance), not those whose trigger is exactly 0 (still at the
-                    # zero-crossing boundary, e.g. Rinc2 when only Qinc fired and reset2
-                    # wasn't changed — Rinc2 should still fire).
+                elif old and not new and not events[i][3]:
                     queue[:] = [(p, o, j, c) for p, o, j, c in queue if j != i]
             prev_trig = new_trig
 
@@ -236,10 +230,8 @@ def _simulate_events(
         for pending_item in pending:
             pending_time, event_idx, pending_value = pending_item
             if pending_time <= current_time + tolerance:
-                persistent = events[event_idx][3]
-                if (
-                    not persistent
-                    and triggers[event_idx](current_time, updated_state) <= 0
+                if not events[event_idx][3] and not conditions[event_idx](
+                    current_time, updated_state
                 ):
                     continue
                 values = (
@@ -254,11 +246,9 @@ def _simulate_events(
         return updated_state
 
     def apply_pending_with_chain(current_time: float, state: np.ndarray) -> np.ndarray:
-        pre_trig = {i: triggers[i](current_time, state) > 0 for i in range(len(events))}
+        pre_trig = [cond(current_time, state) for cond in conditions]
         new_state = apply_pending_events(current_time, state)
-        post_trig = {
-            i: triggers[i](current_time, new_state) > 0 for i in range(len(events))
-        }
+        post_trig = [cond(current_time, new_state) for cond in conditions]
         newly_triggered = [
             i for i in range(len(events)) if not pre_trig[i] and post_trig[i]
         ]
@@ -272,17 +262,15 @@ def _simulate_events(
         return new_state
 
     # Events already True at t=0 with initialValue=True start disarmed.
-    # Use >= -tolerance so continuous triggers at exactly the boundary (value=0) are
-    # treated as True, matching the step-function trigger behaviour (0.5 > 0).
     for idx, event in enumerate(events):
-        if event[2] and triggers[idx](t_cur, y_cur) >= -tolerance:
+        if event[2] and conditions[idx](t_cur, y_cur):
             armed[idx] = False
 
     y0_state = y_cur.copy()
     t0_events = [
         idx
         for idx, event in enumerate(events)
-        if not event[2] and triggers[idx](t_cur, y_cur) >= -tolerance
+        if not event[2] and conditions[idx](t_cur, y_cur)
     ]
     if t0_events:
         for idx in t0_events:
@@ -319,7 +307,7 @@ def _simulate_events(
                 available_event_indices = [
                     idx
                     for idx, trigger in enumerate(triggers)
-                    if armed[idx] and trigger(t_cur, y_cur) <= 0
+                    if armed[idx] and trigger(t_cur, y_cur) <= 0 and idx not in stalled
                 ]
                 available_triggers = [triggers[idx] for idx in available_event_indices]
                 try:
@@ -361,17 +349,18 @@ def _simulate_events(
                             first_event_y = np.asarray(event_y[0], dtype=float).copy()
 
                     if first_event_y is not None:
-                        # Fire available events whose trigger is >= 0 at the crossing
-                        # time (continuous triggers are exactly 0 at the zero-crossing,
-                        # step-function triggers 0.5). scipy dense-output interpolation
-                        # may leave a crossing trigger at -epsilon, so values in
-                        # [-tolerance, 0) also count — but only if the event actually
-                        # crossed in this segment: scipy reported it, or its trigger was
-                        # clearly negative at the segment start (scipy reports only the
-                        # first of several simultaneous terminal events). A trigger
-                        # idling just below zero through round-off (e.g. abs(Q - R) >
-                        # maxdiff with abs(Q - R) == maxdiff - 1e-16) must not piggyback
-                        # on another event's root: it would fire with stale trigger-time
+                        # Fire available events whose condition holds at the crossing
+                        # time. scipy dense-output interpolation may leave a crossing
+                        # trigger at -epsilon (condition False), so values in
+                        # [-tolerance, 0) also count — but only if the event is actually
+                        # crossing: its trigger was clearly negative at the segment start
+                        # (scipy reports only the first of several simultaneous terminal
+                        # events), or scipy reported it and the trigger is rising (scipy
+                        # also reports a root at the segment start for a trigger sitting
+                        # still on its boundary, e.g. x > y at x == y). A trigger idling
+                        # just below zero through round-off (e.g. abs(Q - R) > maxdiff
+                        # with abs(Q - R) == maxdiff - 1e-16) must not piggyback on
+                        # another event's root: it would fire with stale trigger-time
                         # values and then miss its real False->True transition.
                         crossed = {
                             available_event_indices[k]
@@ -381,14 +370,17 @@ def _simulate_events(
                         triggered_events = [
                             idx
                             for idx in available_event_indices
-                            if triggers[idx](first_event_t, first_event_y) >= 0
+                            if conditions[idx](first_event_t, first_event_y)
                             or (
-                                (
-                                    idx in crossed
-                                    or triggers[idx](t_cur, y_cur) < -tolerance
-                                )
-                                and triggers[idx](first_event_t, first_event_y)
+                                triggers[idx](first_event_t, first_event_y)
                                 >= -tolerance
+                                and (
+                                    triggers[idx](t_cur, y_cur) < -tolerance
+                                    or (
+                                        idx in crossed
+                                        and rising(idx, first_event_t, first_event_y)
+                                    )
+                                )
                             )
                         ]
                         if triggered_events:
@@ -403,13 +395,15 @@ def _simulate_events(
                             t_cur = first_event_t
                             y_cur = apply_pending_with_chain(t_cur, y_cur)
                         else:
-                            # Advance state to event time even when no event fires.
-                            # Step-function triggers at the exact threshold evaluate to
-                            # -0.5 (condition is not strictly True), failing >= -tolerance.
-                            # By setting t_cur = first_event_t (not +tolerance) and
-                            # updating y_cur, the next integration starts from the crossing
-                            # point; the trigger immediately goes positive (the condition
-                            # becomes True just past the threshold) and fires.
+                            if first_event_t <= t_cur + tolerance:
+                                # Spurious boundary roots without progress: integrate
+                                # the next segment without these events and re-check
+                                # their exact condition afterwards.
+                                stalled.update(crossed)
+                            # Advance state to event time even when no event fires, e.g.
+                            # a step-function trigger at the exact threshold of a strict
+                            # condition (-0.5): the next integration starts from the
+                            # crossing point, where the trigger immediately goes positive.
                             y_cur = first_event_y
                             t_cur = first_event_t
                         continue
@@ -419,6 +413,18 @@ def _simulate_events(
                     y_cur = np.asarray(sol.y, dtype=float)[:, -1].copy()
                 else:
                     t_cur = segment_end
+
+                newly_true = [idx for idx in stalled if conditions[idx](t_cur, y_cur)]
+                stalled.clear()
+                if newly_true:
+                    for idx in newly_true:
+                        armed[idx] = False
+                    y_cur = process_triggered_events(
+                        event_indices=newly_true,
+                        fire_time=t_cur,
+                        trigger_state=y_cur,
+                        current_state=y_cur,
+                    )
 
             y_cur = apply_pending_with_chain(t_cur, y_cur)
 
@@ -886,3 +892,80 @@ def test_conc_rate_rule_in_dynamic_compartment(tmp_path: Path) -> None:
         amount, t_eval * (1 + 0.5 * t_eval), atol=1e-8, err_msg=model_code
     )
     np.testing.assert_allclose(conc, t_eval, atol=1e-8, err_msg=model_code)
+
+
+_STRICT_TRIGGER_SBML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="strict_trigger">
+    <listOfParameters>
+      <parameter id="x" value="0.3" constant="false"/>
+      <parameter id="y" value="0.3" constant="true"/>
+      <parameter id="z" value="0" constant="false"/>
+    </listOfParameters>
+    <listOfEvents>
+      <event id="A" useValuesFromTriggerTime="true">
+        <trigger initialValue="true" persistent="true">
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply><geq/><csymbol encoding="text"
+              definitionURL="http://www.sbml.org/sbml/symbols/time"> t </csymbol>
+              <cn> 1.05 </cn></apply>
+          </math>
+        </trigger>
+        <listOfEventAssignments>
+          <eventAssignment variable="x">
+            <math xmlns="http://www.w3.org/1998/Math/MathML">
+              <apply><plus/><ci> x </ci><cn> 1 </cn></apply>
+            </math>
+          </eventAssignment>
+        </listOfEventAssignments>
+      </event>
+      <event id="B" useValuesFromTriggerTime="true">
+        <trigger initialValue="false" persistent="true">
+          <math xmlns="http://www.w3.org/1998/Math/MathML">
+            <apply><gt/><ci> x </ci><ci> y </ci></apply>
+          </math>
+        </trigger>
+        <listOfEventAssignments>
+          <eventAssignment variable="z">
+            <math xmlns="http://www.w3.org/1998/Math/MathML"><ci> x </ci></math>
+          </eventAssignment>
+        </listOfEventAssignments>
+      </event>
+    </listOfEvents>
+  </model>
+</sbml>
+"""
+
+
+def test_strict_trigger_false_at_equality(tmp_path: Path) -> None:
+    """A strict trigger (x > y) must read False when x == y.
+
+    Its continuous form x - y is exactly 0 at equality, the same value a
+    non-strict trigger (x >= y) has, so B used to fire at t=0 (initialValue=false)
+    with z = 0.3. Correct: B stays False until A raises x at t=1.05, then fires with
+    the post-A value z = 1.3.
+    """
+    sbml_file = tmp_path / "model.xml"
+    sbml_file.write_text(_STRICT_TRIGGER_SBML)
+    model_code = codegen(transform(load_document(file=sbml_file)))
+
+    module = types.ModuleType("strict_trigger_model")
+    exec(model_code, module.__dict__)  # noqa: S102
+
+    variable_names = list(module.variable_names)
+    t_eval = np.linspace(0.0, 2.0, 21)
+    _, sim_y = _simulate_events(
+        model=module.model,
+        y0=module.y0,
+        t_eval=t_eval,
+        events=list(module.events),
+        variable_names=variable_names,
+        atol=1e-8,
+        rtol=1e-8,
+        seed=0,
+    )
+    z = sim_y[variable_names.index("z")]
+    np.testing.assert_allclose(
+        z, np.where(t_eval < 1.05, 0.0, 1.3), atol=1e-8, err_msg=model_code
+    )
