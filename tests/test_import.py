@@ -824,3 +824,65 @@ def test_d4_multi_compartment_stoichiometry_correction(tmp_path: Path) -> None:
         rtol=1e-4,
         err_msg=f"S2_amount mismatch: spurious V2 factor not suppressed (D4).\nModel:\n{model_code}",
     )
+
+
+_CONC_RATE_RULE_DYNAMIC_COMPARTMENT_SBML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">
+  <model id="conc_rate_rule_dynamic_compartment">
+    <listOfCompartments>
+      <compartment id="C" size="1.0" constant="false" spatialDimensions="3"/>
+    </listOfCompartments>
+    <listOfSpecies>
+      <species id="S" compartment="C" initialConcentration="0.0"
+               hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/>
+    </listOfSpecies>
+    <listOfRules>
+      <rateRule variable="S">
+        <math xmlns="http://www.w3.org/1998/Math/MathML"><cn> 1 </cn></math>
+      </rateRule>
+      <rateRule variable="C">
+        <math xmlns="http://www.w3.org/1998/Math/MathML"><cn> 0.5 </cn></math>
+      </rateRule>
+    </listOfRules>
+  </model>
+</sbml>
+"""
+
+
+def test_conc_rate_rule_in_dynamic_compartment(tmp_path: Path) -> None:
+    """Concentration rate rule on a species whose compartment has its own rate rule.
+
+    The species is tracked as S_amount, so the rate rule must be rewritten to
+    d(S_amount)/dt = d(S)/dt * C + S * d(C)/dt. Previously it was left targeting S
+    (now only derived), so S_amount was never integrated and stayed at 0.
+
+    Analytical: C(t) = 1 + 0.5t, S(t) = t, S_amount(t) = t * (1 + 0.5t).
+    """
+    sbml_file = tmp_path / "model.xml"
+    sbml_file.write_text(_CONC_RATE_RULE_DYNAMIC_COMPARTMENT_SBML)
+    model_code = codegen(transform(load_document(file=sbml_file)))
+
+    module = types.ModuleType("conc_rate_rule_model")
+    exec(model_code, module.__dict__)  # noqa: S102
+
+    t_eval = np.linspace(0.0, 2.0, 21)
+    sol = solve_ivp(
+        module.model,
+        y0=module.y0,
+        t_span=(t_eval[0], t_eval[-1]),
+        t_eval=t_eval,
+        rtol=1e-9,
+        atol=1e-11,
+    )
+    variable_names = list(module.variable_names)
+    amount = sol.y[variable_names.index("S_amount")]
+    conc = [
+        module.derived(float(t), row)["S"]
+        for t, row in zip(sol.t, sol.y.T, strict=True)
+    ]
+
+    np.testing.assert_allclose(
+        amount, t_eval * (1 + 0.5 * t_eval), atol=1e-8, err_msg=model_code
+    )
+    np.testing.assert_allclose(conc, t_eval, atol=1e-8, err_msg=model_code)

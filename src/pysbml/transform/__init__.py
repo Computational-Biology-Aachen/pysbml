@@ -668,8 +668,17 @@ def _handle_conc(
         # Fix assignment rules
         # Nothing to do here :)
 
-        # Fix rate rule
-        # Nothing to do here :)
+        # Fix rate rule: d(S_amount)/dt = d(S_conc)/dt * C + S_conc * d(C)/dt
+        if (rr := tmodel.reactions.get(f"d{k}")) is not None:
+            comp_rate_rxn = tmodel.reactions.get(f"d{compartment}")
+            if comp_rate_rxn is not None:
+                rr.expr = expr(
+                    _mul_expr(rr.expr, compartment)
+                    + _mul_expr(sympy.Symbol(k), comp_rate_rxn.expr)
+                )
+                rr.stoichiometry = {k_amount: sympy.Float(1.0)}
+            else:
+                rr.stoichiometry = {k_amount: sympy.Symbol(compartment)}
 
         # Fix reactions
         for rxn_name in ctx.rxns_by_var[k]:
